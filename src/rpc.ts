@@ -8,6 +8,10 @@ class PreArgObj{
     type:ArgObjType
     data:any
 }
+let debugFlag=true
+export function setDebugFlag(flag:boolean){
+    debugFlag=flag
+}
 interface ArgObj{
     type:ArgObjType,
     data:any
@@ -183,10 +187,12 @@ export class Client{
         this.sender=sender
     }
     putAwait(id:string,resolve:any,reject:any){
-        console.log(`${this.getHostId()} is waiting for ${id}`)
         getOrCreateOption(this.hostId).requestPendingDict[id]={resolve,reject}
     }
     async waitForRequest(request:Request):Promise<{}>{
+        if(debugFlag){
+            console.log(`${this.getHostId()} is waiting for ${request.id},`,request)
+        }
         const sender=this.sender
         return new Promise((resolve,reject)=>{
             if(sender==null){
@@ -340,6 +346,9 @@ function getOrCreateOption(id?:string|null|symbol):MessageReceiverOptions{
     if(id==null){
         id=defaultHost
     }
+    if(id===hostId){
+        id=defaultHost
+    }
     if(typeof id =='string' || id===defaultHost){
 
     }else{
@@ -443,7 +452,15 @@ export class MessageReceiver{
         this.getReqPending()[id]={resolve,reject}
     }
     onReceiveMessage(messageRecv:Request|Response,clientForCallBack:Client){
-        // console.log(`${this.getHostId()} received a ${message.idFor?'reply, which is for '+message.id+' and it is '+message.idFor:'request,which id is '+message.id} `)
+        if(clientForCallBack==null){
+            throw new Error("clientForCallBack must not null")
+        }
+        if((clientForCallBack instanceof Client)==false){
+            throw new Error("clientForCallBack must be a Client")
+        }
+        if(debugFlag){
+            console.log(`${this.getHostId()} received a ${messageRecv.idFor?'reply, which is for '+messageRecv.id+' and it is '+messageRecv.idFor:'request,which id is '+messageRecv.id} `,messageRecv)
+        }
         let id_for=messageRecv.idFor;
 
         //is request, not reply
@@ -533,5 +550,5 @@ export interface ISender{
 
 let idCOunt=0;
 function getId(){
-    return ''+(idCOunt++)
+    return hostId+''+(idCOunt++)
 }
