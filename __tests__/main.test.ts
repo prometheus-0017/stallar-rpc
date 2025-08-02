@@ -1,4 +1,5 @@
 import { type MessageReceiverOptions,RunnableProxyManager,PlainProxyManager,setHostId,Client,ISender,asProxy,getMessageReceiver,MessageReceiver } from '../src/index'
+import { _deleteProxy } from '../src/rpc';
 
 async function main(){
     setHostId('frontJs');
@@ -49,6 +50,7 @@ async function main(){
     try{
         const callback=(a:number)=>expect(a).toBe(3)
         let result=await rpc.hello(1,2,asProxy(callback))
+        _deleteProxy(callback)
         expect(result).toBe(3)
     }catch(e){
         console.error(e)

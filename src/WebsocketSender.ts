@@ -1,4 +1,4 @@
-import { getMessageReceiver,Client,type ISender,type Message, MessageReceiver, PlainProxyManager, RunnableProxyManager, asProxy, setHostId } from "./rpc";
+import { getMessageReceiver,Client,type ISender,type Message, MessageReceiver, PlainProxyManager, RunnableProxyManager, asProxy, setHostId } from "./rpc.js";
 export class WebSocketSender implements ISender{
     wsConnection:WebSocketConnectionKeeper
     constructor(wsConnection:WebSocketConnectionKeeper){

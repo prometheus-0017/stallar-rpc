@@ -22,8 +22,11 @@ export function setHostId(id:string){
     hostId=id
     getOrCreateOption(null).hostId=id
 }
-export function _deleteProxy(id:string,hostId?:string){
+export function _deleteProxyById(id:string,hostId?:string){
     getOrCreateOption(hostId).plainProxyManager.deleteById(id)
+}
+export function _deleteProxy(obj:object,hostId?:string){
+    getOrCreateOption(hostId).plainProxyManager.delete(obj)
 }
 export interface Request{
     id:string,
@@ -280,7 +283,7 @@ export class Client{
     }
 }
 let messageReceiver:MessageReceiver|null;
-type Message=Request|Response
+export type Message=Request|Response
 export function getMessageReceiver():MessageReceiver{
     if(messageReceiver==null){
         messageReceiver=new MessageReceiver();
@@ -366,8 +369,12 @@ export class MessageReceiver{
     }
     async withContext(message:Request,client:Client,args:any[],func:Function):Promise<any>{
         let constThis=this
-        const context:RpcContext={}
         let result:any={}
+        const context:RpcContext={
+            setContext:(_result:Response)=>{
+                result.value=_result
+            }
+        }
         function generateInteceptorExecutor(indexOfInteceptor:number):NextFunction{
             if(indexOfInteceptor<constThis.interceptors.length){
                 async function executeThisInteceptor(){
