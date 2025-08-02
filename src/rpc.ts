@@ -177,7 +177,7 @@ export class Client{
         this.hostId=hostId as string
     }
     setSender(sender:ISender){
-        if(this.sender!=null){
+        if(this.sender!=null && (this.sender instanceof NotImplementSender)==false ){
             throw new Error('sender already set')
         }
         this.sender=sender
