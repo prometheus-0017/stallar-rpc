@@ -1,5 +1,5 @@
 type ArgObjType='proxy'|'data'|null
-class PreArgObj{
+export class PreArgObj{
     constructor(type:ArgObjType,data:any){
         this.type=type
         this.data=data
@@ -8,7 +8,7 @@ class PreArgObj{
     type:ArgObjType
     data:any
 }
-let debugFlag=true
+let debugFlag=false
 export function setDebugFlag(flag:boolean){
     debugFlag=flag
 }
@@ -451,7 +451,7 @@ export class MessageReceiver{
     putAwait(id:string,resolve:any,reject:any){
         this.getReqPending()[id]={resolve,reject}
     }
-    onReceiveMessage(messageRecv:Request|Response,clientForCallBack:Client){
+    async onReceiveMessage(messageRecv:Request|Response,clientForCallBack:Client){
         if(clientForCallBack==null){
             throw new Error("clientForCallBack must not null")
         }
@@ -479,13 +479,13 @@ export class MessageReceiver{
                 const shouldWithContext=this.objectWithContext.has(message.objectId)
                 if(message.method=='__call__'){
                     if(shouldWithContext){
-                        result=this.withContext(message,clientForCallBack,args,object)
+                        result=await this.withContext(message,clientForCallBack,args,object)
                     }else{
                         result=object(...args)
                     }
                 }else{
                     if(shouldWithContext){
-                        result=this.withContext(message,clientForCallBack,args,object[message.method])
+                        result=await this.withContext(message,clientForCallBack,args,object[message.method])
                     }else{
                         result=object[message.method](...args)
                     }

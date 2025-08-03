@@ -1,2 +1,2 @@
-export { type Message,type Response,type Request,type MessageReceiverOptions,PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId,type ISender } from './rpc.js'
+export { PreArgObj,type Message,type Response,type Request,type MessageReceiverOptions,PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId,type ISender } from './rpc.js'
 export { WebSocketConnectionKeeper,WebSocketSender } from './WebsocketSender.js'
