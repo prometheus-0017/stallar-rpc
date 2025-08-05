@@ -1,6 +1,6 @@
 {
   "name": "stallar-rpc",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "a rpc tool implements remote callback",
   "main": "index.js",
   "type": "module",
