@@ -1,8 +1,8 @@
 {
   "name": "stallar-rpc",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "a rpc tool implements remote callback",
-  "main": "index.js",
+  "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "ts-node src/index.ts",
@@ -18,7 +18,7 @@
     "remote",
     "callback"
   ],
-  "author": "magiCian",
+  "author": "prometheus0017",
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^30.0.0",
