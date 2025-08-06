@@ -30,11 +30,11 @@ export class WebSocketConnectionKeeper{
     async getConnection():Promise<WebSocket>{
         let socket=this.socket as WebSocket
 
-        if(socket==null||socket!=null && socket.readyState==WebSocket.OPEN){
+        if(socket!=null && socket.readyState==WebSocket.OPEN){
             return socket
         }
 
-        while(socket.readyState!=WebSocket.OPEN){
+        while(socket==null||socket.readyState!=WebSocket.OPEN){
             if(socket.readyState==WebSocket.CLOSED){
                 if(Date.now()-this.lastTime>5000){
                     this.tryCount=0
