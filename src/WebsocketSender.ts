@@ -30,7 +30,7 @@ export class WebSocketConnectionKeeper{
     async getConnection():Promise<WebSocket>{
         let socket=this.socket as WebSocket
 
-        if(socket!=null && socket.readyState==WebSocket.OPEN){
+        if(socket==null||socket!=null && socket.readyState==WebSocket.OPEN){
             return socket
         }
 
