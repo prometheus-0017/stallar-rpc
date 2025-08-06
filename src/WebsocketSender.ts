@@ -23,6 +23,7 @@ export class WebSocketConnectionKeeper{
         this.port=port
         this.path=path
         this.client=client
+        this.socket=new WebSocket(this.url())
     }
     url(){
         return `ws://${this.host}:${this.port}${this.path}`
@@ -34,7 +35,7 @@ export class WebSocketConnectionKeeper{
             return socket
         }
 
-        while(socket==null||socket.readyState!=WebSocket.OPEN){
+        while(socket.readyState!=WebSocket.OPEN){
             if(socket.readyState==WebSocket.CLOSED){
                 if(Date.now()-this.lastTime>5000){
                     this.tryCount=0
