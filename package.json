@@ -1,6 +1,6 @@
 {
   "name": "stallar-rpc",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "a rpc tool implements remote callback",
   "main": "dist/index.js",
   "type": "module",
@@ -18,7 +18,9 @@
     "remote",
     "callback"
   ],
-  "files":["dist"],
+  "files": [
+    "dist"
+  ],
   "author": "prometheus0017",
   "license": "MIT",
   "devDependencies": {
