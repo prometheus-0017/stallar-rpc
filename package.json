@@ -1,5 +1,5 @@
 {
-  "name": "stallar-rpc",
+  "name": "xuri-rpc",
   "version": "1.0.8",
   "description": "a rpc tool implements remote callback",
   "main": "dist/index.js",

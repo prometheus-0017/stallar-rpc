@@ -1,6 +1,6 @@
-# stallar-rpc
+# xuri-rpc
 
-stallar-rpc is an RPC framework that superficially supports object and callback passing. In reality, however, no actual object migration occurs—the computation still takes place at its original location.
+xuri-rpc is an RPC framework that superficially supports object and callback passing. In reality, however, no actual object migration occurs—the computation still takes place at its original location.
 
 Currently, only methods on objects can be passed; passing attributes is not supported.
 
@@ -23,7 +23,7 @@ Supports both JavaScript and Python environments.
 ## Installation
 
 ```
-npm install stallar-rpc
+npm install xuri-rpc
 ```
 
 ## Examples
@@ -35,7 +35,7 @@ The examples use WebSocket as the message carrier. You'll need to set this up yo
 **Server**
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import { WebSocketServer } from 'ws'
 
 // Set hostName
@@ -88,7 +88,7 @@ wss.on('error', (error) => {
 **Client**
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import {WebSocket} from 'ws'
 
 // Define a sender
@@ -137,7 +137,7 @@ First, the object you define should accept a dictionary as its first parameter t
 **Server**
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import { WebSocketServer } from 'ws'
 
 // Set hostName
@@ -198,7 +198,7 @@ wss.on('error', (error) => {
 **Client**
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import {WebSocket} from 'ws'
 
 // Define a sender

@@ -1,5 +1,5 @@
-# stallar-rpc
-stallar-rpc是一款在表面上支持了传递对象和回调的RPC框架。当然，实际上。并没有对象发生迁移，实际的计算还发生在它本来的位置。
+# xuri-rpc
+xuri-rpc是一款在表面上支持了传递对象和回调的RPC框架。当然，实际上。并没有对象发生迁移，实际的计算还发生在它本来的位置。
 
 目前只支持传递对象上的方法，暂不支持传递属性。
 
@@ -27,7 +27,7 @@ stallar-rpc是一款在表面上支持了传递对象和回调的RPC框架。当
 ## 安装
 
 ```
-npm install stallar-rpc
+npm install xuri-rpc
 ```
 
 ## 示例
@@ -39,7 +39,7 @@ npm install stallar-rpc
 服务端
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import { WebSocketServer } from 'ws'
 
 // 设置hostName
@@ -92,7 +92,7 @@ wss.on('error', (error) => {
 客户端
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import {WebSocket} from 'ws'
 
 //define a sender
@@ -141,7 +141,7 @@ main()
 服务端
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import { WebSocketServer } from 'ws'
 
 // 设置hostName
@@ -202,7 +202,7 @@ wss.on('error', (error) => {
 客户端
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'stallar-rpc'
+import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
 import {WebSocket} from 'ws'
 
 //define a sender
