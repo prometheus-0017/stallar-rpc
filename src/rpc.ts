@@ -169,6 +169,9 @@ class NotImplementSender implements ISender{
         throw new Error('Not implement')
     }
 }
+function isRequest(obj:any):boolean{
+    return obj.id!=null && obj.idFor==null
+}
 export class Client{
     sender:ISender=new NotImplementSender();
     hostId:string;
@@ -191,6 +194,8 @@ export class Client{
     }
     async waitForRequest(request:Request):Promise<{}>{
         if(debugFlag){
+            assertRequest(request)
+            assertArgJSON(request)
             console.log(`${this.getHostId()} is waiting for ${request.id},`,request)
         }
         const sender=this.sender
@@ -302,6 +307,9 @@ type Interceptor=(context:RpcContext,message:Request,client:Client,nextGenerator
 type NextFunction=()=>Promise<void>;
 type AutoWrapper=(x:any)=>any
 const shallowAutoWrapper:AutoWrapper=(obj)=>{
+    if(obj==null){
+        return obj
+    }
     if(typeof obj=='function'){
         return asProxy(obj)
     }else if(Array.isArray(obj)){
@@ -459,12 +467,11 @@ export class MessageReceiver{
             throw new Error("clientForCallBack must be a Client")
         }
         if(debugFlag){
-            console.log(`${this.getHostId()} received a ${messageRecv.idFor?'reply, which is for '+messageRecv.id+' and it is '+messageRecv.idFor:'request,which id is '+messageRecv.id} `,messageRecv)
+            console.log(`${this.getHostId()} received a ${(messageRecv as Response).idFor?'reply, which is for '+messageRecv.id+' and it is '+(messageRecv as Response).idFor:'request,which id is '+messageRecv.id} `,messageRecv)
         }
-        let id_for=messageRecv.idFor;
 
         //is request, not reply
-        if(id_for==null){
+        if(!isResponse(messageRecv)){
             const message:Request=messageRecv as Request;
             let args=message.args.map(x=>clientForCallBack.reverseToArgObj(x))
             try{
@@ -518,12 +525,10 @@ export class MessageReceiver{
                 console.error(e)
 
             }
-            // if(this.rpcServer!=null){
-            // }else{
-            //     console.warn(`[${this.getHostId()}] no rpc specified but received a request`,message)
-            // }
             
         }else{
+            let id_for=messageRecv.idFor;
+
             const message:Response=messageRecv as Response;
             const reqPending=this.getReqPending();
             if(reqPending[id_for]==undefined){
@@ -543,6 +548,9 @@ export class MessageReceiver{
     }
 
 }
+function isResponse(message:Request|Response):message is Response{
+    return (message as Response).idFor!=undefined
+}
 export interface ISender{
     send(message:Request|Response):void
 }
@@ -551,4 +559,209 @@ export interface ISender{
 let idCOunt=0;
 function getId(){
     return hostId+''+(idCOunt++)
+}
+
+// 校验工具函数
+
+function isString(value: any): value is string {
+  return typeof value === 'string';
+}
+
+function isObject(value: any): value is Record<string, any> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isArray(value: any): value is any[] {
+  return Array.isArray(value);
+}
+
+// 校验 ArgObjType 的合法值
+function isValidArgObjType(type: any): type is 'proxy' | 'data' | null {
+  return type === 'proxy' || type === 'data' || type === null;
+}
+
+// 校验 ArgObj
+function assertArgObj(obj: any, path: string = 'argObj'): asserts obj is ArgObj {
+  if (!isObject(obj)) {
+    throw new Error(`${path}: expected object but got ${typeof obj}`);
+  }
+
+  if (!('type' in obj)) {
+    throw new Error(`${path}.type: missing required field "type"`);
+  }
+  if (!isValidArgObjType(obj.type)) {
+    throw new Error(`${path}.type: expected 'proxy' | 'data' | null, got ${JSON.stringify(obj.type)}`);
+  }
+
+  // `data` 字段可以是任意类型，无需校验
+}
+function isSerializableDeep(obj:any, seen = new WeakSet()) {
+    // 处理 null (typeof null 是 "object", 需要单独处理)
+    if (obj === null) {
+        return true;
+    }
+
+    const type = typeof obj;
+
+    // 基本类型检查
+    if (type === "string" || type === "number" || type === "boolean" || type === "undefined") {
+        // undefined 在对象属性中会被忽略，但作为根值时 stringify 会返回 undefined
+        return true;
+    }
+
+    if (type === "bigint") {
+        return false; // BigInt 无法被 JSON 序列化
+    }
+
+    if (type === "symbol") {
+        return false; // Symbol 无法被 JSON 序列化
+    }
+
+    if (type === "function") {
+        return false; // 函数无法被 JSON 序列化
+    }
+
+    // 如果是对象或数组
+    if (type === "object") {
+        if(Object.getPrototypeOf(obj)!==Object.prototype){
+            return false;
+        }
+        // 检查循环引用
+        if (seen.has(obj)) {
+            return false;
+        }
+        seen.add(obj);
+
+        // 检查数组
+        if (Array.isArray(obj)) {
+            for (let item of obj) {
+                if (!isSerializableDeep(item, seen)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 检查普通对象
+        for (let key in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                // 检查键名 (JSON 键名必须是字符串)
+                // (虽然 JavaScript 对象键名会自动转为字符串，但 Symbol 键需要排除)
+                if (typeof key === "symbol") {
+                    return false;
+                }
+                // 检查属性值
+                if (!isSerializableDeep(obj[key], seen)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // 其他类型 (如 "object" 但不是 null、数组或普通对象，例如 Date)
+    // 注意：Date 对象会被转换为字符串，所以是可序列化的
+    return true;
+}
+
+// 测试用例
+// console.log(isSerializableDeep({ a: 1, b: "hello" })); // true
+// console.log(isSerializableDeep({ a: 1, b: undefined })); // false (因为 undefined 作为值被检测到)
+// console.log(isSerializableDeep({ a: 1, b: function() {} })); // false
+// console.log(isSerializableDeep({ a: 1, b: Symbol("test") })); // false
+// console.log(isSerializableDeep(BigInt(123))); // false
+// console.log(isSerializableDeep(new Date())); // true (Date 是可序列化的)
+// console.log(isSerializableDeep(/regex/)); // false (正则表达式通常不被视为可 JSON 序列化，会被转为 {})
+// 循环引用
+// const obj = { a: 1 };
+// obj.b = obj;
+// console.log(isSerializableDeep(obj)); // false
+function assertArgJSON(request:Request){
+    for (let i = 0; i < request.args.length; i++) {
+        let arg=request.args[i];
+        let res=isSerializableDeep(arg,new WeakSet())
+        if(!res){
+            console.error(arg)
+            throw new Error(`${request.method}.args[${i}] is not serializable`)
+        }
+    }
+}
+// 校验 Request
+function assertRequest(request: any): asserts request is Request {
+  if (!isObject(request)) {
+    throw new Error(`request: expected object but got ${typeof request}`);
+  }
+
+  const { id, meta, method, objectId, args } = request;
+
+  // 校验 id
+  if (typeof id !== 'string') {
+    throw new Error(`request.id: expected string, got ${typeof id}`);
+  }
+
+  // 校验 meta
+  if (!isObject(meta)) {
+    throw new Error(`request.meta: expected object, got ${typeof meta}`);
+  }
+
+  // 校验 method
+  if (typeof method !== 'string') {
+    throw new Error(`request.method: expected string, got ${typeof method}`);
+  }
+
+  // 校验 objectId
+  if (typeof objectId !== 'string') {
+    throw new Error(`request.objectId: expected string, got ${typeof objectId}`);
+  }
+
+  // 校验 args 数组
+  if (!isArray(args)) {
+    throw new Error(`request.args: expected array, got ${typeof args}`);
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    try {
+      assertArgObj(args[i], `request.args[${i}]`);
+    } catch (e) {
+      throw e; // 直接抛出，保留路径信息
+    }
+  }
+}
+
+// 校验 Response
+function assertResponse(response: any): asserts response is Response {
+  if (!isObject(response)) {
+    throw new Error(`response: expected object but got ${typeof response}`);
+  }
+
+  const { id, idFor, status, trace, data } = response;
+
+  // 校验 id
+  if (typeof id !== 'string') {
+    throw new Error(`response.id: expected string, got ${typeof id}`);
+  }
+
+  // 校验 idFor
+  if (typeof idFor !== 'string') {
+    throw new Error(`response.idFor: expected string, got ${typeof idFor}`);
+  }
+
+  // 校验 status
+  if (typeof status !== 'number') {
+    throw new Error(`response.status: expected number, got ${typeof status}`);
+  }
+
+  // trace 是可选的，但如果存在必须是字符串
+  if (trace !== undefined && typeof trace !== 'string') {
+    throw new Error(`response.trace: if present, must be string, got ${typeof trace}`);
+  }
+
+  // data 是可选的 ArgObj
+  if (data !== undefined) {
+    try {
+      assertArgObj(data, 'response.data');
+    } catch (e) {
+      throw e;
+    }
+  }
 }
