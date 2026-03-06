@@ -47,19 +47,6 @@ export interface Response{
     trace?:string,
     data?:ArgObj
 }
-// export interface Message{
-//     id:string,
-//     idFor?:string,
-//     objectId:string,
-//     method:string,
-//     args:Array<ArgObj>,
-//     status?:number,
-//     trace?:string,
-//     data?:ArgObj
-// }
-// type Not<T>={
-//     [P in keyof T]:never
-// }
 interface RunnableProxy{
 
 }
@@ -208,6 +195,9 @@ export class Client{
         });
 
     }
+    //preargobj仍然需要保留，浙江针对于可序列化对象的远程操作，那怎么区分到地方了以后的普通对象和代理对象？所有对象前面加个符号。
+    //应当存在一种更广泛的设计考虑，而不是是在这里。走一步看一步。
+    //我觉得你像使用本地对象一样使用远程对象这个事情在一开始就不是很现实。你必须得要包装一次别人做的对象，不然就可能出现别人用的是同步对象，但是远程对象都是异步的。而且还有一个问题是如果你对对象进行了一次包装，那。如果这个对象此前没有考虑这种远程调用的情况，中间产生的无数对象都要被包装成这种代理。这个成本很高。你需要一种顺序来确保集合的范围。我觉得这也不是什么大问题啊你再做一个同步版本不就完了？那***底层Thunder的是同步的然后应该有一个地方可以选是同步还是异步。
     toArgObj(obj:any):ArgObj{
         if(obj instanceof PreArgObj){
             return {type:obj.type,data:obj.data}
@@ -498,7 +488,14 @@ export class MessageReceiver{
                     }
                 }
                 result=this.resultAutoWrapper(result)
+                result=await result
                 let wrappedResult:ArgObj=clientForCallBack.toArgObj(result)
+                if(debugFlag){
+                    if(isSerializableDeep(wrappedResult)==false){
+                        console.error(`${message.method}: result is not serializable`,object)
+                        throw new Error(`${message.method}: result is not serializable`)
+                    }
+                }
                 clientForCallBack.sender!.send({
                     id:getId(),
                     objectId:'',
@@ -595,6 +592,11 @@ function assertArgObj(obj: any, path: string = 'argObj'): asserts obj is ArgObj 
 
   // `data` 字段可以是任意类型，无需校验
 }
+//应当自动转换成代理对象，不然的话不能做到一个类实际上调用的函数是一个本地对象和一个远程对象的时候，它的参数格式和类型是一致的。
+//你应该考虑集合中的。深层次的代理对象的情况，不然的话，这个操作起来还是很麻烦的。
+//如果你想要加代理对象的属性支持的话，那么在Java中还是get set。在JS中可以有set property在Python中。有get set吗？
+// Host ID在设置的时候，初始化的时候得给一个随机值，不然如果是默认值的话，现在想要加这个。根据host ID找web socket，这样的话多连接容易会串。
+//日期是一个非常糟糕的东西。 JSON里没有日期类型。啊，那你把它和普通类型和代理类型并列。
 function isSerializableDeep(obj:any, seen = new WeakSet()) {
     // 处理 null (typeof null 是 "object", 需要单独处理)
     if (obj === null) {
