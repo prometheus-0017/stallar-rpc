@@ -191,9 +191,15 @@ export class Client{
                 throw new Error('sender not set')
             }
             this.putAwait(request.id,resolve,reject)
-            sender!.send(request)
-        });
-
+            let senderPromise=async ()=>{
+                try{
+                    await sender!.send(request)
+                }catch(e){
+                    reject(e);
+                }
+            };
+            senderPromise();
+        })
     }
     //preargobj仍然需要保留，浙江针对于可序列化对象的远程操作，那怎么区分到地方了以后的普通对象和代理对象？所有对象前面加个符号。
     //应当存在一种更广泛的设计考虑，而不是是在这里。走一步看一步。
