@@ -1,4 +1,4 @@
-type ArgObjType='proxy'|'data'|null
+type ArgObjType='proxy'|'data'| 'datetime' | null
 export class PreArgObj{
     constructor(type:ArgObjType,data:any){
         this.type=type
@@ -16,7 +16,7 @@ interface ArgObj{
     type:ArgObjType,
     data:any
 }
-interface PlainProxy{
+interface ProxyDescriber{
     id:string,
     hostId:string,
     members:Array<{type:'function'|'property',name:string}>
@@ -27,10 +27,10 @@ export function setHostId(id:string){
     getOrCreateOption(null).hostId=id
 }
 export function _deleteProxyById(id:string,hostId?:string){
-    getOrCreateOption(hostId).plainProxyManager.deleteById(id)
+    getOrCreateOption(hostId).objectOfProxyManager.deleteById(id)
 }
 export function _deleteProxy(obj:object,hostId?:string){
-    getOrCreateOption(hostId).plainProxyManager.delete(obj)
+    getOrCreateOption(hostId).objectOfProxyManager.delete(obj)
 }
 export interface Request{
     id:string,
@@ -43,20 +43,21 @@ export interface Request{
 export interface Response{
     id:string,
     idFor:string,
+    meta:Record<string,any>
     status:number,
     trace?:string,
     data?:ArgObj
 }
-interface RunnableProxy{
+interface RemoteProxy{
 
 }
-export class RunnableProxyManager{
+export class RemoteProxyManager{
     
-    map:Map<string,WeakRef<RunnableProxy>>
+    map:Map<string,WeakRef<RemoteProxy>>
     constructor(){
-        this.map=new Map<string,WeakRef<RunnableProxy>>()
+        this.map=new Map<string,WeakRef<RemoteProxy>>()
     }
-    set(id:string,proxy:RunnableProxy){
+    set(id:string,proxy:RemoteProxy){
         this.map.set(id,new WeakRef(proxy))
     }
     get(id:string){
@@ -72,7 +73,7 @@ export class RunnableProxyManager{
     }
 }
 // let runnableProxyManager=new RunnableProxyManager()
-export class PlainProxyManager{
+export class ObjectOfProxyManager{
     proxyMap:Map<any,string> = new Map<any,string>()
     reverseProxyMap:Map<string,any> = new Map<string,any>()
     set(obj:object,id:string){
@@ -98,17 +99,8 @@ export class PlainProxyManager{
         this.proxyMap.delete(obj)
     }
 }
-// let proxyManager=new PlainProxyManager()
-// function getGlobalHostId(){
-//     return hostId
-// }
-// function getGlobalProxyManager(){
-//     return proxyManager
-// }
-export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
-    
-    const proxyManager=getOrCreateOption(hostIdFrom).plainProxyManager
-    const hostId=getOrCreateOption(hostIdFrom).hostId
+function getOrGenerateObjectId(obj:object,hostIdFrom:string){
+    const proxyManager=getOrCreateOption(hostIdFrom).objectOfProxyManager
     if(hostId==null){
         throw new Error("hostId is null")
     }
@@ -118,11 +110,16 @@ export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
         proxyManager.set(obj,id)
     }
     let id=proxyManager.get(obj) as string
-    // if obj is a function
+
+    return id
+}
+function createProxyForObject(proxyId:string,obj:object,hostId:string){
+    
     let proxy=null
+    // if obj is a function
     if(typeof obj=='function'){
         proxy={
-            id,
+            id:proxyId,
             hostId:hostId as string,
             members:[{type:'function',name:'__call__'}]
         }
@@ -131,7 +128,7 @@ export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
             proxy=null
         }else{
             proxy = {
-                id,
+                id:proxyId,
                 hostId:hostId as string,
                 members:Object
                     .keys(obj)
@@ -140,12 +137,24 @@ export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
                     .map(k=>({name:k,type:'function'}))}
         }
     }
+    return proxy
+}
+
+export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
+
+    const hostId=getOrCreateOption(hostIdFrom).hostId
+
+    let id=getOrGenerateObjectId(obj,hostId)
+
+    let proxy=createProxyForObject(id,obj,hostId)
+
     return new PreArgObj('proxy',proxy)
 }
 export function generateErrorReply(message:Request,errorText:string,status:number=500){
     let reply:Response={
         id:getId(),
         idFor:message.id,
+        meta:{},
         trace:errorText,
         status,
     }
@@ -176,8 +185,8 @@ export class Client{
         }
         this.sender=sender
     }
-    putAwait(id:string,resolve:any,reject:any){
-        getOrCreateOption(this.hostId).requestPendingDict[id]={resolve,reject}
+    putAwait(id:string,resolve:any,reject:any,request:Message){
+        getOrCreateOption(this.hostId).requestPendingDict[id]={resolve,reject,request,sendTime:Date.now()}
     }
     async waitForRequest(request:Request):Promise<{}>{
         if(debugFlag){
@@ -190,7 +199,7 @@ export class Client{
             if(sender==null){
                 throw new Error('sender not set')
             }
-            this.putAwait(request.id,resolve,reject)
+            this.putAwait(request.id,resolve,reject,request)
             let senderPromise=async ()=>{
                 try{
                     await sender!.send(request)
@@ -219,60 +228,86 @@ export class Client{
         }
     }
     getProxyManager(){
-        return getOrCreateOption(this.hostId).plainProxyManager
+        return getOrCreateOption(this.hostId).objectOfProxyManager
     }
     getRunnableProxyManager(){
         return getOrCreateOption(this.hostId).runnableProxyManager
     }
+    createRemoteProxy(data:ProxyDescriber){
+        let result:Record<string,any>={}
+        if(data.hostId==this.hostId){
+            return this.getProxyManager().getById(data.id)
+        }
+
+        let object=this.getRunnableProxyManager().get(data.id)
+        if(object!=null){
+            return object
+        }
+        for(let member of data.members){
+            const key=member.type
+            if(key=='property'){
+                console.warn('not implemented')
+            }else if (key=='function'){
+                result[member.name]=async (...args:any[])=>{ 
+
+                    let argsTransformed=args.map(x=>this.argsAutoWrapper(x)).map(arg=>{ 
+                        return this.toArgObj(arg)
+                    })
+
+                    let request:Request={
+                        objectId:data.id,
+                        meta:{},
+                        id:getId(),
+                        method:member.name,
+                        args:argsTransformed
+                    }
+                    
+                    let res:{};
+                    res=await this.waitForRequest(request)
+                    return res
+                }
+            }else{
+                throw new Error('no such function')
+            } 
+        }
+
+        //一段补丁，对于函数，hack掉原来的对象，直接上函数
+        if(result['__call__']){
+            const func=async (...args:any[])=>{
+                return await result['__call__'](...args)
+            }
+            Object.assign(func,result)
+            result=func
+        }
+        return result
+    }
+    transformArg(argObj:ArgObj,clazz:any){
+        if(argObj.type=='data'){
+            return argObj.data
+        }
+
+        let data:ProxyDescriber=argObj.data as ProxyDescriber
+        let result=this.createRemoteProxy(data)
+        
+        this.getRunnableProxyManager().set(data.id,result)
+
+        //clazz 是根据 typeIndicator 进一步转化对象，例如在java中这是一个class对象，根据class对象构造对应的接口Proxy，JavaScript这里没有这种东西
+        //...
+        let finalResult=result
+
+        return result
+    }
     reverseToArgObj(argObj:ArgObj):any{
         if(argObj.type=='data'){
             return argObj.data
-        }else{
-            let result:Record<string,any>={}
-            let data:PlainProxy=argObj.data as PlainProxy
-
-            if(data.hostId==this.hostId){
-                return this.getProxyManager().getById(data.id)
-            }
-
-            let object=this.getRunnableProxyManager().get(data.id)
-            if(object!=null){
-                return object
-            }
-            for(let member of data.members){
-                const key=member.type
-                if(key=='property'){
-                    console.warn('not implemented')
-                }else if (key=='function'){
-                    result[member.name]=async (...args:any[])=>{ 
-                        let argsTransformed=args.map(x=>this.argsAutoWrapper(x)).map(arg=>{ 
-                            return this.toArgObj(arg)
-                        })
-                        let request:Request={
-                            objectId:data.id,
-                            meta:{},
-                            id:getId(),
-                            method:member.name,
-                            args:argsTransformed
-                        }
-                        let res:{};
-                        res=await this.waitForRequest(request)
-                        return res
-                    }
-                }else{
-                    throw new Error('no such function')
-                } 
-            }
-            if(result['__call__']){
-                const func=async (...args:any[])=>{
-                    return await result['__call__'](...args)
-                }
-                Object.assign(func,result)
-                result=func
-            }
-            this.getRunnableProxyManager().set(data.id,result)
-            return result
         }
+
+        let data:ProxyDescriber=argObj.data as ProxyDescriber
+        let result=this.createRemoteProxy(data)
+        
+        this.getRunnableProxyManager().set(data.id,result)
+
+        return result
     }
     async getObject(objectId:string){ 
         let request:Request={
@@ -282,7 +317,7 @@ export class Client{
             method:'getMain',
             args:[this.toArgObj(objectId)]
         }
-        let res:RunnableProxy= await this.waitForRequest(request) as Response
+        let res:RemoteProxy= await this.waitForRequest(request) as Response
         return res;
     }
     async getMain(){
@@ -339,8 +374,8 @@ const shallowAutoWrapper:AutoWrapper=(obj)=>{
     }
 }
 export interface MessageReceiverOptions{
-    plainProxyManager:PlainProxyManager
-    runnableProxyManager:RunnableProxyManager
+    objectOfProxyManager:ObjectOfProxyManager
+    runnableProxyManager:RemoteProxyManager
     hostId:string
     requestPendingDict:RequestPendingDict
 }
@@ -361,8 +396,8 @@ function getOrCreateOption(id?:string|null|symbol):MessageReceiverOptions{
 
     if(!options[id]){
         options[id]={
-            plainProxyManager:new PlainProxyManager(),
-            runnableProxyManager:new RunnableProxyManager(),
+            objectOfProxyManager:new ObjectOfProxyManager(),
+            runnableProxyManager:new RemoteProxyManager(),
             hostId:(id===defaultHost?null:id )as string,
             requestPendingDict:{}
         }
@@ -370,7 +405,7 @@ function getOrCreateOption(id?:string|null|symbol):MessageReceiverOptions{
     return options[id]
 }
 type RequestPendingDict={
-    [id:string]:{resolve:(result:any)=>void,reject:(error:any)=>void}
+    [id:string]:{resolve:(result:any)=>void,reject:(error:any)=>void,request:Message,sendTime:number}
 }
 export class MessageReceiver{
     rpcServer?:Record<string,Function>
@@ -417,7 +452,7 @@ export class MessageReceiver{
     }
     hostId?:string
     getProxyManager(){
-        return getOrCreateOption(this.hostId).plainProxyManager
+        return getOrCreateOption(this.hostId).objectOfProxyManager
     }
     getRunnableProxyManager(){
         return getOrCreateOption(this.hostId).runnableProxyManager
@@ -452,8 +487,19 @@ export class MessageReceiver{
     addInterceptor(interceptor:Interceptor){
         this.interceptors.push(interceptor)
     }
-    putAwait(id:string,resolve:any,reject:any){
-        this.getReqPending()[id]={resolve,reject}
+    putAwait(id:string,resolve:any,reject:any,request:Message){
+        this.getReqPending()[id]={resolve,reject,request,sendTime:Date.now()}
+    }
+    currentWaitingCount(){
+        return Object.keys(this.getReqPending()).length
+    }
+    killTimeout(millSec:number){
+        for(let value of Object.values(this.getReqPending())){
+            if(Date.now()-value.sendTime>millSec){
+                value.reject(new Error('timeout'))
+                delete this.getReqPending()[value.request.id]
+            }
+        }
     }
     async onReceiveMessage(messageRecv:Request|Response,clientForCallBack:Client){
         if(clientForCallBack==null){
@@ -469,15 +515,16 @@ export class MessageReceiver{
         //is request, not reply
         if(!isResponse(messageRecv)){
             const message:Request=messageRecv as Request;
-            let args=message.args.map(x=>clientForCallBack.reverseToArgObj(x))
             try{
-
+                
                 let object=this.getProxyManager().getById(message.objectId)
                 if(object==null){
                     clientForCallBack.sender.send(generateErrorReply(message,'object not found',100))
                     return
                 }
                 
+                let args=message.args.map(x=>clientForCallBack.transformArg(x,null))
+
                 let result=null
                 const shouldWithContext=this.objectWithContext.has(message.objectId)
                 if(message.method=='__call__'){
@@ -507,6 +554,7 @@ export class MessageReceiver{
                     objectId:'',
                     method:'',
                     args:[],
+                    meta:{},
                     idFor:message.id,
                     data:wrappedResult,
                     status:200
@@ -520,6 +568,7 @@ export class MessageReceiver{
                     objectId:'',
                     method:'',
                     args:[],
+                    meta:{},
                     idFor:message.id,
                     data:{type:'data',data:null},
                     trace:traceStr,
@@ -603,6 +652,7 @@ function assertArgObj(obj: any, path: string = 'argObj'): asserts obj is ArgObj 
 //如果你想要加代理对象的属性支持的话，那么在Java中还是get set。在JS中可以有set property在Python中。有get set吗？
 // Host ID在设置的时候，初始化的时候得给一个随机值，不然如果是默认值的话，现在想要加这个。根据host ID找web socket，这样的话多连接容易会串。
 //日期是一个非常糟糕的东西。 JSON里没有日期类型。啊，那你把它和普通类型和代理类型并列。
+let enchanceType=true
 function isSerializableDeep(obj:any, seen = new WeakSet()) {
     // 处理 null (typeof null 是 "object", 需要单独处理)
     if (obj === null) {
@@ -616,9 +666,13 @@ function isSerializableDeep(obj:any, seen = new WeakSet()) {
         // undefined 在对象属性中会被忽略，但作为根值时 stringify 会返回 undefined
         return true;
     }
-
-    if (type === "bigint") {
-        return false; // BigInt 无法被 JSON 序列化
+    
+    if(obj instanceof ArrayBuffer || obj instanceof Date || obj instanceof BigInt){
+        if(enchanceType){
+            return true
+        }else{
+            return false
+        }
     }
 
     if (type === "symbol") {
