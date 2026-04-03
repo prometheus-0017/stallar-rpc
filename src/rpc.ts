@@ -54,11 +54,17 @@ interface RemoteProxy{
 export class RemoteProxyManager{
     
     map:Map<string,WeakRef<RemoteProxy>>
+    clientMap:Map<Client,Set<string>>
     constructor(){
         this.map=new Map<string,WeakRef<RemoteProxy>>()
+        this.clientMap=new Map<Client,Set<string>>()
     }
-    set(id:string,proxy:RemoteProxy){
+    set(id:string,proxy:RemoteProxy,client:Client){
         this.map.set(id,new WeakRef(proxy))
+        if(this.clientMap.get(client)==null){
+            this.clientMap.set(client,new Set<string>())
+        }
+        this.clientMap.get(client)?.add(id)
     }
     get(id:string){
         if(!this.map.has(id)){
@@ -73,15 +79,76 @@ export class RemoteProxyManager{
     }
 }
 // let runnableProxyManager=new RunnableProxyManager()
+class ProxyObjectHandlerForManager{
+    id:string
+    target:any;
+    lastRegistered:number=0;
+    constructor(id:string,target:any){
+        this.id=id
+        this.target=target
+        this.lastRegistered=Date.now()
+    }
+}
+export function removeOutdatedProxyObject(timeout:number=-1){ 
+    if(timeout<=0){
+        timeout=gcTimeLimit
+    }
+    for(let k of Object.keys(options)){
+        let manager=options[k].objectOfProxyManager
+        let before=manager.proxyMap.size
+        let count=0
+        for(let [id,proxyObjectHandler] of Object.entries(manager)){
+            if(Date.now()-proxyObjectHandler.lastRegistered>timeout*3){
+                manager.deleteById(id)
+                count++;
+            }
+        }
+        if(count>0 && debugFlag){
+            console.log(`${k} removed ${count} proxies,before ${before} after ${manager.proxyMap.size}`)
+        }
+    }
+}
+
+export function autoReRegister(){ 
+    for(let v of Object.values(options)){
+        let manager=v.runnableProxyManager
+        for(let client of manager.clientMap.keys()){
+            let ids=manager.clientMap.get(client)
+            if(ids==null){
+                continue
+            }
+            let toReRegister=[]
+            for(let id of ids){
+                let obj=manager.get(id)
+                if(obj==null){
+                    ids.delete(id)
+                    if(ids.size==0){
+                        manager.clientMap.delete(client)
+                    }
+                    continue
+                }
+                toReRegister.push([id])
+            }
+            client.getObject('main0').reRegister(toReRegister)
+        }
+    }
+}
+
 export class ObjectOfProxyManager{
     proxyMap:Map<any,string> = new Map<any,string>()
-    reverseProxyMap:Map<string,any> = new Map<string,any>()
+    reverseProxyMap:Map<string,ProxyObjectHandlerForManager> = new Map<string,any>()
     set(obj:object,id:string){
         this.proxyMap.set(obj,id)
-        this.reverseProxyMap.set(id,obj)
+        this.reverseProxyMap.set(id,new ProxyObjectHandlerForManager(id,obj))
+    }
+    reRegister(id:string){
+        let handler=this.reverseProxyMap.get(id)
+        if(handler){
+            handler.lastRegistered=Date.now()
+        }
     }
     getById(id:string){
-        return this.reverseProxyMap.get(id)
+        return this.reverseProxyMap.get(id)?.target
     }
     get(obj:object):string{
         return this.proxyMap.get(obj) as string
@@ -165,12 +232,165 @@ class NotImplementSender implements ISender{
         throw new Error('Not implement')
     }
 }
+function isDict(obj:any):obj is Record<string,any>{
+    return Object.getPrototypeOf(obj)!==Object.prototype
+}
+function isArray(obj:any):obj is any[]{
+    return Array.isArray(obj)
+}
+function isString(value: any): value is string {
+  return typeof value === 'string';
+}
+function isNumber(value: any): value is number {
+  return typeof value === 'number';
+}
+function isBoolean(value: any): value is boolean {
+  return typeof value === 'boolean';
+}
+function isNull(value: any): value is null {
+  return value === null;
+}
+function isBytes(value: any): value is Uint8Array {
+  return value instanceof Uint8Array;
+}
+function isSimpleObject(obj:any){
+    return isBytes(obj) || isString(obj) || isNumber(obj) || isBoolean(obj) || isNull(obj)
+}
+interface CustomArgTranslatorFunction{
+    match(obj:any):boolean
+    translate(obj:any):any
+    reverseTranslate(obj:any):any
+}
+class ArgTranslator {
+    typeIndecator = '__type'
+    customTranslators:CustomArgTranslatorFunction[]=[]
+    setTypeIndecator(typeIndecator: string) {
+        this.typeIndecator = typeIndecator
+    }
+    toArgObj(target: any, asProxyLocal: (obj: any) => any): any {
+
+        if(target instanceof PreArgObj){
+            if(target.type=='proxy'){
+                return target.data
+            }else if (target.type=='data'){
+                return target.data
+            }else{
+                throw 'not implemented'
+            }
+        }
+
+        if (isSimpleObject(target)) {
+            return target
+        }
+
+        // 2. 列表 (Array) - 递归处理每一项
+        if (Array.isArray(target)) {
+            return target.map(item => this.toArgObj(item, asProxyLocal));
+        }
+
+        // 3. 普通对象 - 递归处理每个属性
+        if (isDict(target)) {
+            const result: Record<string, any> = {};
+            for (const key in target) {
+                if (Object.prototype.hasOwnProperty.call(target, key)) {
+                    result[key] = this.toArgObj(target[key], asProxyLocal);
+                }
+            }
+            return result;
+        }
+        for(let customTranslator of this.customTranslators){
+            if(customTranslator.match(target)){
+                return customTranslator.translate(target);
+            }
+        }
+
+        // 4. 其它对象 (Date, RegExp, Map, Set, Class实例等) - 调用 asProxy
+        return asProxyLocal(target);
+    }
+    reverseToArgObj(target: any,client:Client): any {
+
+        if (isDict(target) &&target?.hasOwnProperty(this.typeIndecator)) {
+            let data:ProxyDescriber=target.data as ProxyDescriber
+
+            let result = client.createRemoteProxy(data)
+
+            client.getRunnableProxyManager().set(data.id, result)
+
+            return result
+        }
+
+        for(let customTranslator of this.customTranslators){
+            if(customTranslator.match(target.data)){
+                return customTranslator.reverseTranslate(target.data);
+            }
+        }
+
+        // 2. 列表 (Array) - 递归处理每一项
+        if (Array.isArray(target)) {
+            return target.map(item => this.reverseToArgObj(item, client));
+        }
+
+        // 3. 字典 - 递归处理每个属性
+        if (isDict(target)) {
+            const result: Record<string, any> = {};
+            for (const key in target) {
+                if (Object.prototype.hasOwnProperty.call(target, key)) {
+                    result[key] = this.reverseToArgObj(target[key], client);
+                }
+            }
+            return result;
+        }
+
+        return target;
+
+    }
+
+}
+export function autoCheck(){
+    setInterval(()=>{
+        killTimeoutConnection()
+    },3*1000)
+    setInterval(() => { 
+        autoReRegister()
+    },3*1000)
+    setInterval(() => { 
+        removeOutdatedProxyObject()
+    },3*1000)
+}
+function killTimeoutConnection(client:Client|null=null,millSec:number=-1){
+    if(millSec==-1){
+        millSec=connectionLimit
+    }
+    const forOptions=(func:(option:MessageReceiverOptions)=>void)=>{
+        if(client!=null){
+            let options=getOrCreateOption(client.getHostId())
+            func(options)
+        }else{
+            for(let value of Object.values(options)){
+                func(value)
+            }
+        }
+    }
+    forOptions((option)=>{
+        let reqPending=option.requestPendingDict
+        for(let value of Object.values(reqPending)){
+            if(Date.now()-value.sendTime>millSec){
+                value.reject(new Error('timeout'))
+                delete reqPending[value.request.id]
+            }
+        }
+    })
+}
+const gcTimeLimit=30*1000
+const connectionLimit=30*1000
 function isRequest(obj:any):boolean{
     return obj.id!=null && obj.idFor==null
 }
 export class Client{
     sender:ISender=new NotImplementSender();
     hostId:string;
+    argTranslator:ArgTranslator=new ArgTranslator()
+    
     argsAutoWrapper:AutoWrapper=shallowAutoWrapper
     setArgsAutoWrapper(autoWrapper:AutoWrapper){
         this.argsAutoWrapper=autoWrapper
@@ -179,11 +399,16 @@ export class Client{
     constructor(hostId?:string|null){
         this.hostId=hostId as string
     }
+     
+    
     setSender(sender:ISender){
         if(this.sender!=null && (this.sender instanceof NotImplementSender)==false ){
             throw new Error('sender already set')
         }
         this.sender=sender
+    }
+    getReqPending(){
+        return getOrCreateOption(this.hostId).requestPendingDict
     }
     putAwait(id:string,resolve:any,reject:any,request:Message){
         getOrCreateOption(this.hostId).requestPendingDict[id]={resolve,reject,request,sendTime:Date.now()}
@@ -214,11 +439,7 @@ export class Client{
     //应当存在一种更广泛的设计考虑，而不是是在这里。走一步看一步。
     //我觉得你像使用本地对象一样使用远程对象这个事情在一开始就不是很现实。你必须得要包装一次别人做的对象，不然就可能出现别人用的是同步对象，但是远程对象都是异步的。而且还有一个问题是如果你对对象进行了一次包装，那。如果这个对象此前没有考虑这种远程调用的情况，中间产生的无数对象都要被包装成这种代理。这个成本很高。你需要一种顺序来确保集合的范围。我觉得这也不是什么大问题啊你再做一个同步版本不就完了？那***底层Thunder的是同步的然后应该有一个地方可以选是同步还是异步。
     toArgObj(obj:any):ArgObj{
-        if(obj instanceof PreArgObj){
-            return {type:obj.type,data:obj.data}
-        }else {
-            return {type:'data',data:obj}
-        }
+        return this.argTranslator.toArgObj(obj,(obj)=>asProxy(obj,this.getHostId()))
     }
     getHostId(){
         if(this.hostId==null){
@@ -280,7 +501,7 @@ export class Client{
             result=func
         }
         return result
-    }
+    }//支持byte和支持date是两码事 byte是底层的，date是转换的,你要是用字符来表示byte那太恶心了 非要用拿sender里弄去
     transformArg(argObj:ArgObj,clazz:any){
         if(argObj.type=='data'){
             return argObj.data
@@ -298,16 +519,7 @@ export class Client{
         return result
     }
     reverseToArgObj(argObj:ArgObj):any{
-        if(argObj.type=='data'){
-            return argObj.data
-        }
-
-        let data:ProxyDescriber=argObj.data as ProxyDescriber
-        let result=this.createRemoteProxy(data)
-        
-        this.getRunnableProxyManager().set(data.id,result)
-
-        return result
+        return this.argTranslator.reverseToArgObj(argObj,this)
     }
     async getObject(objectId:string){ 
         let request:Request={
@@ -467,12 +679,20 @@ export class MessageReceiver{
         this.hostId=hostId
         this.objectWithContext=new Set()
         let hostIdToSend=this.getHostId()
-        this.getProxyManager().set({'getMain':(objectId:string)=>{
-            if(objectId==null){
-                objectId='main'
+        this.getProxyManager().set({
+            'getMain':(objectId:string)=>{
+                if(objectId==null){
+                    objectId='main'
+                }
+                return asProxy(this.getProxyManager().getById(objectId),hostIdToSend)
+            },
+            'reRegister':(list:Array<[string,number]>)=>{
+                for(let item of list){
+                    const objectId=item[0]
+                    this.getProxyManager().reRegister(objectId)
+                }
             }
-            return asProxy(this.getProxyManager().getById(objectId),hostIdToSend)
-        }},'main0')
+        },'main0')
     }
     setMain(obj:Record<string,Function>){
         this.rpcServer=obj
@@ -493,14 +713,7 @@ export class MessageReceiver{
     currentWaitingCount(){
         return Object.keys(this.getReqPending()).length
     }
-    killTimeout(millSec:number){
-        for(let value of Object.values(this.getReqPending())){
-            if(Date.now()-value.sendTime>millSec){
-                value.reject(new Error('timeout'))
-                delete this.getReqPending()[value.request.id]
-            }
-        }
-    }
+   
     async onReceiveMessage(messageRecv:Request|Response,clientForCallBack:Client){
         if(clientForCallBack==null){
             throw new Error("clientForCallBack must not null")
@@ -511,7 +724,6 @@ export class MessageReceiver{
         if(debugFlag){
             console.log(`${this.getHostId()} received a ${(messageRecv as Response).idFor?'reply, which is for '+messageRecv.id+' and it is '+(messageRecv as Response).idFor:'request,which id is '+messageRecv.id} `,messageRecv)
         }
-
         //is request, not reply
         if(!isResponse(messageRecv)){
             const message:Request=messageRecv as Request;
@@ -615,17 +827,10 @@ function getId(){
 
 // 校验工具函数
 
-function isString(value: any): value is string {
-  return typeof value === 'string';
-}
-
 function isObject(value: any): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isArray(value: any): value is any[] {
-  return Array.isArray(value);
-}
 
 // 校验 ArgObjType 的合法值
 function isValidArgObjType(type: any): type is 'proxy' | 'data' | null {

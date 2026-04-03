@@ -3,6 +3,7 @@
       "lib": ["ES2020", "ES2021.WeakRef"],
       "target": "es2018",
       "module": "ESNext",
+      "moduleResolution": "bundler",
       "outDir": "dist",
       "isolatedModules": true,
       "declaration": true,
