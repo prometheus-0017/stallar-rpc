@@ -2,24 +2,32 @@ import { MessageReceiver,Client,Message,ISender } from "./rpc";
 import {encode,decode} from 'cbor-x'
 class LocalSerializationSender implements ISender{
     channel:DumpChannel;
-    constructor(dumpChannel:DumpChannel){
+    dir:'toServer'|'toClient';
+    constructor(dumpChannel:DumpChannel,dir:'toServer'|'toClient'){
+        this.dir=dir
         this.channel=dumpChannel
     }
     async send(message:Message){
         let dumped=encode(message)
-        let message2=decode(dumped);
-        this.channel.sendToServer(message2)
+        if(this.dir=='toServer'){
+            this.channel.sendToServer(dumped)
+        }else{
+            this.channel.sendToClient(dumped)
+        }
     }
 }
-export function createServer(hostId:string,channel:DumpChannel){
+export async function createServer(hostId:string,channel:DumpChannel){
     let messageReceiver:MessageReceiver=new MessageReceiver(hostId)
+    let client=new Client(hostId)
+    client.setSender(new LocalSerializationSender(channel,'toClient'))
+    channel.setServerSide(messageReceiver,client)
     const serve=(mainObject:any)=>{
         messageReceiver.setMain(mainObject)
         return [messageReceiver,serve]
     }
     return serve
 }
-class DumpChannel{
+export class DumpChannel{
     serverSideReceiver:MessageReceiver|null=null
     clientSideReceiver:MessageReceiver|null=null
     serverSideClient:Client|null=null
@@ -40,12 +48,12 @@ class DumpChannel{
         this.clientSideReceiver!.onReceiveMessage(decode(message),this.clientSideClient as Client)
     }
 }
-export async function createMain(channel:DumpChannel){
-    let client=new Client()
-    let messageReceiver=new MessageReceiver()
+export async function createMain(hostId:string,channel:DumpChannel){
+    let client=new Client(hostId)
+    let messageReceiver=new MessageReceiver(hostId)
     channel.setClientSide(messageReceiver,client)
-    client.sender=new LocalSerializationSender(channel)
-    let main=await client.getMain()
+    client.sender=new LocalSerializationSender(channel,'toServer')
+    let main:any=await client.getMain()
     return [client,main]
     
 }

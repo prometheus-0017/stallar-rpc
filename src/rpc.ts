@@ -97,7 +97,7 @@ export function removeOutdatedProxyObject(timeout:number=-1){
         let manager=options[k].objectOfProxyManager
         let before=manager.proxyMap.size
         let count=0
-        for(let [id,proxyObjectHandler] of Object.entries(manager)){
+        for(let [id,proxyObjectHandler] of manager.reverseProxyMap.entries()){
             if(Date.now()-proxyObjectHandler.lastRegistered>timeout*3){
                 manager.deleteById(id)
                 count++;
@@ -168,7 +168,7 @@ export class ObjectOfProxyManager{
 }
 function getOrGenerateObjectId(obj:object,hostIdFrom:string){
     const proxyManager=getOrCreateOption(hostIdFrom).objectOfProxyManager
-    if(hostId==null){
+    if(hostIdFrom==null){
         throw new Error("hostId is null")
     }
 
@@ -182,7 +182,7 @@ function getOrGenerateObjectId(obj:object,hostIdFrom:string){
 }
 function createProxyForObject(proxyId:string,obj:object,hostId:string){
     
-    let proxy=null
+    let proxy:any=null
     // if obj is a function
     if(typeof obj=='function'){
         proxy={
@@ -233,7 +233,8 @@ class NotImplementSender implements ISender{
     }
 }
 function isDict(obj:any):obj is Record<string,any>{
-    return Object.getPrototypeOf(obj)!==Object.prototype
+    if (obj===null || obj===undefined) return false
+    return Object.getPrototypeOf(obj)===Object.prototype
 }
 function isArray(obj:any):obj is any[]{
     return Array.isArray(obj)
@@ -262,15 +263,16 @@ interface CustomArgTranslatorFunction{
     reverseTranslate(obj:any):any
 }
 class ArgTranslator {
-    typeIndecator = '__type'
+    typeIndicator = '__type'
     customTranslators:CustomArgTranslatorFunction[]=[]
     setTypeIndecator(typeIndecator: string) {
-        this.typeIndecator = typeIndecator
+        this.typeIndicator = typeIndecator
     }
     toArgObj(target: any, asProxyLocal: (obj: any) => any): any {
 
         if(target instanceof PreArgObj){
             if(target.type=='proxy'){
+                target.data[this.typeIndicator]=this.typeIndicator
                 return target.data
             }else if (target.type=='data'){
                 return target.data
@@ -291,6 +293,7 @@ class ArgTranslator {
         // 3. 普通对象 - 递归处理每个属性
         if (isDict(target)) {
             const result: Record<string, any> = {};
+            result[this.typeIndicator]=this.typeIndicator
             for (const key in target) {
                 if (Object.prototype.hasOwnProperty.call(target, key)) {
                     result[key] = this.toArgObj(target[key], asProxyLocal);
@@ -309,8 +312,8 @@ class ArgTranslator {
     }
     reverseToArgObj(target: any,client:Client): any {
 
-        if (isDict(target) &&target?.hasOwnProperty(this.typeIndecator)) {
-            let data:ProxyDescriber=target.data as ProxyDescriber
+        if (isDict(target) &&target?.hasOwnProperty(this.typeIndicator)) {
+            let data:ProxyDescriber=target as ProxyDescriber
 
             let result = client.createRemoteProxy(data)
 
@@ -333,7 +336,7 @@ class ArgTranslator {
         // 3. 字典 - 递归处理每个属性
         if (isDict(target)) {
             const result: Record<string, any> = {};
-            for (const key in target) {
+            for(let key of Object.keys(target)){
                 if (Object.prototype.hasOwnProperty.call(target, key)) {
                     result[key] = this.reverseToArgObj(target[key], client);
                 }
@@ -439,7 +442,7 @@ export class Client{
     //应当存在一种更广泛的设计考虑，而不是是在这里。走一步看一步。
     //我觉得你像使用本地对象一样使用远程对象这个事情在一开始就不是很现实。你必须得要包装一次别人做的对象，不然就可能出现别人用的是同步对象，但是远程对象都是异步的。而且还有一个问题是如果你对对象进行了一次包装，那。如果这个对象此前没有考虑这种远程调用的情况，中间产生的无数对象都要被包装成这种代理。这个成本很高。你需要一种顺序来确保集合的范围。我觉得这也不是什么大问题啊你再做一个同步版本不就完了？那***底层Thunder的是同步的然后应该有一个地方可以选是同步还是异步。
     toArgObj(obj:any):ArgObj{
-        return this.argTranslator.toArgObj(obj,(obj)=>asProxy(obj,this.getHostId()))
+        return this.argTranslator.toArgObj(obj,(obj)=>asProxy(obj,this.getHostId(),this.argTranslator.typeIndicator))
     }
     getHostId(){
         if(this.hostId==null){
@@ -550,6 +553,7 @@ type Interceptor=(context:RpcContext,message:Request,client:Client,nextGenerator
 type NextFunction=()=>Promise<void>;
 type AutoWrapper=(x:any)=>any
 const shallowAutoWrapper:AutoWrapper=(obj)=>{
+    return obj;
     if(obj==null){
         return obj
     }
@@ -684,7 +688,7 @@ export class MessageReceiver{
                 if(objectId==null){
                     objectId='main'
                 }
-                return asProxy(this.getProxyManager().getById(objectId),hostIdToSend)
+                return asProxy(this.getProxyManager().getById(objectId),hostIdToSend,)
             },
             'reRegister':(list:Array<[string,number]>)=>{
                 for(let item of list){
@@ -735,7 +739,7 @@ export class MessageReceiver{
                     return
                 }
                 
-                let args=message.args.map(x=>clientForCallBack.transformArg(x,null))
+                let args=message.args.map(x=>clientForCallBack.reverseToArgObj(x))
 
                 let result=null
                 const shouldWithContext=this.objectWithContext.has(message.objectId)
