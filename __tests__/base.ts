@@ -7,3 +7,8 @@ export async function mainFunc(mainObject:any,testProcess:(client:Client,main:an
     let [_client,main0]=await createMain('client',channel)
     await testProcess(_client,main0)
 }
+export function assert(bool:boolean,text:string|null=null){
+    if(!bool){
+        throw new Error(text||'')
+    }
+}
