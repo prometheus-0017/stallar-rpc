@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-      "lib": ["ES2020", "ES2021.WeakRef"],
+      "lib": ["ES2020", "ES2021.WeakRef", "DOM"],
       "target": "es2018",
       "module": "ESNext",
       "moduleResolution": "bundler",
