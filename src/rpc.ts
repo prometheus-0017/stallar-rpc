@@ -308,7 +308,7 @@ interface CustomArgTranslatorFunction{
     reverseTranslate(obj:any):any
 }
 class ArgTranslator {
-    typeIndicator = '__type'
+    typeIndicator = '__is_rpc_proxy__'
     customTranslators:CustomArgTranslatorFunction[]=[]
     setTypeIndecator(typeIndecator: string) {
         this.typeIndicator = typeIndecator
