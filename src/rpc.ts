@@ -98,6 +98,9 @@ export function removeOutdatedProxyObject(timeout:number=-1){
         let before=manager.proxyMap.size
         let count=0
         for(let [id,proxyObjectHandler] of manager.reverseProxyMap.entries()){
+            if(id=='main0'){
+                continue
+            }
             if(Date.now()-proxyObjectHandler.lastRegistered>timeout*3){
                 manager.deleteById(id)
                 count++;
@@ -108,8 +111,33 @@ export function removeOutdatedProxyObject(timeout:number=-1){
         }
     }
 }
+export function getProxyHoldingInfo(){
+    let result=[]
+    for(let v of Object.values(options)){
+        let manager=v.objectOfProxyManager
+        let earliestDate=new Date()
+        manager.reverseProxyMap.forEach((value,key)=>{
+            if(value==null){
+                return
+            }
+            if(key=='main0'){
+                return
+            }
+            if(value.lastRegistered<earliestDate.getTime()){
+                earliestDate=new Date(value.lastRegistered)
+            }
+        })
+        result.push({
+            hostId:v.hostId,
+            count:manager.proxyMap.size,
+            earliestDate,
+        })
+    }
+    result=result.sort((a,b)=>a.count-b.count)
+    return result
+}
 
-export function autoReRegister(){ 
+export async function autoReRegister(){ 
     for(let v of Object.values(options)){
         let manager=v.runnableProxyManager
         for(let client of manager.clientMap.keys()){
@@ -129,7 +157,16 @@ export function autoReRegister(){
                 }
                 toReRegister.push([id])
             }
-            client.getObject('main0').reRegister(toReRegister)
+
+            let request:Request={
+            meta:{},
+                id:getId(),
+                objectId:'main0',
+                method:'reRegister',
+                args:[client.toArgObj(toReRegister)]
+            }
+            let res:RemoteProxy= await client.waitForRequest(request) as Response
+            
         }
     }
 }
@@ -157,7 +194,7 @@ export class ObjectOfProxyManager{
         return this.proxyMap.has(obj)
     }
     deleteById(id:string){ 
-        let obj=this.reverseProxyMap.get(id)
+        let obj=this.reverseProxyMap.get(id)?.target
         this.proxyMap.delete(obj)
         this.reverseProxyMap.delete(id)
     }
@@ -194,11 +231,19 @@ function createProxyForObject(proxyId:string,obj:object,hostId:string){
         if(obj==null){
             proxy=null
         }else{
+            function getAllProperties(obj:any) {
+                const props:Set<string> = new Set();
+                let current = obj;
+                while (current !== null) {
+                    Object.getOwnPropertyNames(current).forEach(prop => props.add(prop));
+                    current = Object.getPrototypeOf(current);
+                }
+                return Array.from(props);
+            }
             proxy = {
                 id:proxyId,
                 hostId:hostId as string,
-                members:Object
-                    .keys(obj)
+                members:getAllProperties(obj)
                     .filter(k=>((typeof (obj as Record<string,any>)[k])=='function'))
                     .filter(k=>!k.startsWith('__'))
                     .map(k=>({name:k,type:'function'}))}
@@ -206,7 +251,7 @@ function createProxyForObject(proxyId:string,obj:object,hostId:string){
     }
     return proxy
 }
-
+//目前必须有hostId，哪怕pool可以公用，你proxy总得说明是那个hostId啊
 export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
 
     const hostId=getOrCreateOption(hostIdFrom).hostId
@@ -269,11 +314,17 @@ class ArgTranslator {
         this.typeIndicator = typeIndecator
     }
     toArgObj(target: any, asProxyLocal: (obj: any) => any): any {
+        if(target==null){
+            return null
+        }
+        const handlePreArgObj=(obj:PreArgObj)=>{
+            obj.data[this.typeIndicator]=this.typeIndicator
+            return obj.data
+        }
 
         if(target instanceof PreArgObj){
             if(target.type=='proxy'){
-                target.data[this.typeIndicator]=this.typeIndicator
-                return target.data
+               return handlePreArgObj(target)
             }else if (target.type=='data'){
                 return target.data
             }else{
@@ -290,10 +341,9 @@ class ArgTranslator {
             return target.map(item => this.toArgObj(item, asProxyLocal));
         }
 
-        // 3. 普通对象 - 递归处理每个属性
+        // 3. 字典 - 递归处理每个属性
         if (isDict(target)) {
             const result: Record<string, any> = {};
-            result[this.typeIndicator]=this.typeIndicator
             for (const key in target) {
                 if (Object.prototype.hasOwnProperty.call(target, key)) {
                     result[key] = this.toArgObj(target[key], asProxyLocal);
@@ -301,6 +351,7 @@ class ArgTranslator {
             }
             return result;
         }
+        // 5. 自定义类型 - 递归处理属性
         for(let customTranslator of this.customTranslators){
             if(customTranslator.match(target)){
                 return customTranslator.translate(target);
@@ -308,7 +359,8 @@ class ArgTranslator {
         }
 
         // 4. 其它对象 (Date, RegExp, Map, Set, Class实例等) - 调用 asProxy
-        return asProxyLocal(target);
+        let preObj=asProxyLocal(target);
+        return handlePreArgObj(preObj)
     }
     reverseToArgObj(target: any,client:Client): any {
 
@@ -317,7 +369,7 @@ class ArgTranslator {
 
             let result = client.createRemoteProxy(data)
 
-            client.getRunnableProxyManager().set(data.id, result)
+            client.getRunnableProxyManager().set(data.id, result,client)
 
             return result
         }
@@ -442,7 +494,7 @@ export class Client{
     //应当存在一种更广泛的设计考虑，而不是是在这里。走一步看一步。
     //我觉得你像使用本地对象一样使用远程对象这个事情在一开始就不是很现实。你必须得要包装一次别人做的对象，不然就可能出现别人用的是同步对象，但是远程对象都是异步的。而且还有一个问题是如果你对对象进行了一次包装，那。如果这个对象此前没有考虑这种远程调用的情况，中间产生的无数对象都要被包装成这种代理。这个成本很高。你需要一种顺序来确保集合的范围。我觉得这也不是什么大问题啊你再做一个同步版本不就完了？那***底层Thunder的是同步的然后应该有一个地方可以选是同步还是异步。
     toArgObj(obj:any):ArgObj{
-        return this.argTranslator.toArgObj(obj,(obj)=>asProxy(obj,this.getHostId(),this.argTranslator.typeIndicator))
+        return this.argTranslator.toArgObj(obj,(obj)=>asProxy(obj,this.getHostId()))
     }
     getHostId(){
         if(this.hostId==null){
@@ -513,7 +565,7 @@ export class Client{
         let data:ProxyDescriber=argObj.data as ProxyDescriber
         let result=this.createRemoteProxy(data)
         
-        this.getRunnableProxyManager().set(data.id,result)
+        this.getRunnableProxyManager().set(data.id,result,this)
 
         //clazz 是根据 typeIndicator 进一步转化对象，例如在java中这是一个class对象，根据class对象构造对应的接口Proxy，JavaScript这里没有这种东西
         //...
@@ -814,7 +866,6 @@ export class MessageReceiver{
         }
 
     }
-
 }
 function isResponse(message:Request|Response):message is Response{
     return (message as Response).idFor!=undefined
