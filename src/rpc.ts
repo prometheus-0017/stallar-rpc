@@ -160,7 +160,7 @@ export async function autoReRegister(){
 
             let request:Request={
             meta:{},
-                id:getId(),
+                id:getId(v.hostId),
                 objectId:'main0',
                 method:'reRegister',
                 args:[client.toArgObj(toReRegister)]
@@ -210,7 +210,7 @@ function getOrGenerateObjectId(obj:object,hostIdFrom:string){
     }
 
     if(! proxyManager.has(obj)){
-        let id=getId()
+        let id=getId(hostIdFrom)
         proxyManager.set(obj,id)
     }
     let id=proxyManager.get(obj) as string
@@ -262,9 +262,9 @@ export function asProxy(obj:object,hostIdFrom?:string):PreArgObj{
 
     return new PreArgObj('proxy',proxy)
 }
-export function generateErrorReply(message:Request,errorText:string,status:number=500){
+export function generateErrorReply(message:Request,errorText:string,status:number=500,hostIdParam?:string){
     let reply:Response={
-        id:getId(),
+        id:getId(hostIdParam),
         idFor:message.id,
         meta:{},
         trace:errorText,
@@ -442,8 +442,8 @@ function isRequest(obj:any):boolean{
     return obj.id!=null && obj.idFor==null
 }
 export class Client{
-    sender:ISender=new NotImplementSender();
     hostId:string;
+    private _useSender:()=>ISender=()=>new NotImplementSender();
     argTranslator:ArgTranslator=new ArgTranslator()
     
     argsAutoWrapper:AutoWrapper=shallowAutoWrapper
@@ -456,11 +456,11 @@ export class Client{
     }
      
     
-    setSender(sender:ISender){
-        if(this.sender!=null && (this.sender instanceof NotImplementSender)==false ){
-            throw new Error('sender already set')
-        }
-        this.sender=sender
+    setSender(useSender:()=>ISender){
+        this._useSender=useSender
+    }
+    useSender():ISender{
+        return this._useSender()
     }
     getReqPending(){
         return getOrCreateOption(this.hostId).requestPendingDict
@@ -474,7 +474,7 @@ export class Client{
             assertArgJSON(request)
             console.log(`${this.getHostId()} is waiting for ${request.id},`,request)
         }
-        const sender=this.sender
+        const sender=this.useSender()
         return new Promise((resolve,reject)=>{
             if(sender==null){
                 throw new Error('sender not set')
@@ -533,7 +533,7 @@ export class Client{
                     let request:Request={
                         objectId:data.id,
                         meta:{},
-                        id:getId(),
+                        id:getId(this.hostId),
                         method:member.name,
                         args:argsTransformed
                     }
@@ -579,7 +579,7 @@ export class Client{
     async getObject(objectId:string){ 
         let request:Request={
             meta:{},
-            id:getId(),
+            id:getId(this.hostId),
             objectId:'main0',
             method:'getMain',
             args:[this.toArgObj(objectId)]
@@ -787,7 +787,7 @@ export class MessageReceiver{
                 
                 let object=this.getProxyManager().getById(message.objectId)
                 if(object==null){
-                    clientForCallBack.sender.send(generateErrorReply(message,'object not found',100))
+                    clientForCallBack.useSender().send(generateErrorReply(message,'object not found',100,this.getHostId()))
                     return
                 }
                 
@@ -817,8 +817,8 @@ export class MessageReceiver{
                         throw new Error(`${message.method}: result is not serializable`)
                     }
                 }
-                clientForCallBack.sender!.send({
-                    id:getId(),
+                clientForCallBack.useSender()!.send({
+                    id:getId(this.getHostId()),
                     objectId:'',
                     method:'',
                     args:[],
@@ -831,8 +831,8 @@ export class MessageReceiver{
                 let exception=e as Error
                 let trace=exception.stack
                 let traceStr=trace?.split('\n').map(x=>x.trim()).join('\n')
-                clientForCallBack.sender?.send({
-                    id:getId(),
+                clientForCallBack.useSender()?.send({
+                    id:getId(this.getHostId()),
                     objectId:'',
                     method:'',
                     args:[],
@@ -876,8 +876,9 @@ export interface ISender{
 
 
 let idCOunt=0;
-function getId(){
-    return hostId+''+(idCOunt++)
+function getId(hostIdParam?:string){
+    const hid = hostIdParam !== undefined ? hostIdParam : hostId
+    return hid+''+(idCOunt++)
 }
 
 // 校验工具函数

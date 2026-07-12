@@ -1,0 +1,21 @@
+{
+  "name": "@xuri-rpc/message-sender",
+  "version": "1.0.0",
+  "description": "postMessage-based RPC sender for xuri-rpc (Worker, iframe, Chrome extension port)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "xuri-rpc": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.18.0",
+    "cbor-x": "^1.6.0"
+  }
+}

@@ -18,7 +18,7 @@ export async function main(){
         }
     })
     let client=new Client()
-    client.sender=new DirectSender(client)
+    client.setSender(()=>new DirectSender(client))
     let rpc=await client.getMain()
     console.log(await rpc.hello(1,2,(a:number)=>console.log('callback',a)))
 }

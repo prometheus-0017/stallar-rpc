@@ -1,0 +1,18 @@
+{
+  "name": "@xuri-rpc/websocket-sender",
+  "version": "1.0.1",
+  "description": "WebSocket sender for xuri-rpc",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "cbor-x": "^1.6.4",
+    "reconnecting-websocket": "^4.4.0",
+    "xuri-rpc": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

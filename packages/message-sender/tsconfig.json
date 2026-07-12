@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2020", "ES2021.WeakRef", "DOM"],
+    "target": "es2018",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "dist",
+    "isolatedModules": true,
+    "declaration": true,
+    "strict": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

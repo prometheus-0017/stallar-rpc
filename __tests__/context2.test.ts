@@ -57,8 +57,8 @@ async function main(){
     let ClientOnBackend=new Client(hostId)
     let sender=new DirectSender(ClientOnBackend,messageReceiverBackend)
     let backSender=new DirectSender(client,getMessageReceiver())
-    client.sender=sender
-    ClientOnBackend.sender=backSender
+    client.setSender(()=>sender)
+    ClientOnBackend.setSender(()=>backSender)
     client.setArgsAutoWrapper(x=>x);
     let rpc=await client.getObject('contextTest') as any
     let result=await rpc.hello()

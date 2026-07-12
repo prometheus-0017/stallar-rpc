@@ -1,0 +1,16 @@
+{
+  "name": "@xuri-rpc/chrome-extension-sender",
+  "version": "1.0.0",
+  "description": "Chrome extension messaging sender for xuri-rpc",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "xuri-rpc": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
