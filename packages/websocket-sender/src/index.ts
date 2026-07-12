@@ -5,7 +5,7 @@ import { encode, decode } from "cbor-x";
 // ---------------------------------------------------------------------------
 // Sender
 // ---------------------------------------------------------------------------
-
+//记录一下这一次的bug。直观上来看，这是由于每一次调用callback的时候。都指向了最初始的那个ID造成的问题。实际上为什么多次登录页面会获得同样ID的东西，是因为。前端网页设置了固定的host ID和顺序的ID生成。然而实际上应当理解为每一个网页都是新的实例。这里不一致，出现了问题。还有就是当host发生啊。当连接中断以后重新连接的时候需要考虑的情况不仅仅是。客户端的连接和服务端的连接。还有一种情况是已经储存的远程对象，它当中还持有了原来的client。你改的时候。只改了被调用回答的这一侧的获取client的方式实际上是无效的。你应该去改掉放在远程对象里的连接方式。
 export class WebSocketBinarySender implements ISender {
     private rws: ReconnectingWebSocket;
     private _sessionId: string | null | (() => string | null) = null;
