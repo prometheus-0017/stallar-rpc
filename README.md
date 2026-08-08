@@ -1,357 +1,655 @@
 # xuri-rpc
-xuri-rpc是一款在表面上支持了传递对象和回调的RPC框架。当然，实际上。并没有对象发生迁移，实际的计算还发生在它本来的位置。
 
-目前只支持传递对象上的方法，暂不支持传递属性。
+xuri-rpc 是一款支持传递对象和回调的 RPC 框架。对象并不会真正迁移——实际的计算仍然发生在原始位置，远程端获得的是一个代理，调用代理的方法会转发到本体执行。
 
-支持JavaScript和Python两种环境。
+支持 JavaScript（TypeScript）和 Python 两种语言环境。
 
-## 特点
+## 核心特点
 
-* 像使用一个本地对象一样去使用一个远程对象。并且不局限于需要事先声明的对象。
-* 因为对象首先会带着他的信息返回到本地来，你才会接着调用。这就在很大程度上避免了你调一个HTTP的请求，然后给你报404，你却找不着到底是哪个地方没对上的一种无力感。如果这一次再找不着你至少可以看到你还有什么可以选的。
-
-* 不限制底层通信方式，你可以使用websocket，TCP，进程通信，合并到你现有的服务中，甚至基于轮询的http。
-
-  对于专用一个websocket的情况，我们实现了基于websocket的client
-
-  其它情况你可能需要：1，维护一个连接，2，实现一个用于client的sender，连接的维护和本框架无关，除了你需要将连接上收到的信息转发给本框架，而对于sender，你不会做太多事情
-
-## 使用场景
-
-* 浏览器workers之间通信
-
-* iframes之间通信
-
-* 浏览器前端和后端通信
+- 像调用本地对象一样调用远程方法，不限于预声明的接口
+- 支持在 RPC 调用中传递回调函数和可调用对象
+- 传输层无关——WebSocket、TCP、postMessage、chrome.runtime、进程 IPC 均可接入
+- 对象先携带元信息返回，再被调用，避免了传统 HTTP 接口 404 却找不到原因的困境
 
 ## 安装
 
-```
+```bash
 npm install xuri-rpc
 ```
 
-## 示例
+传输层包（按需安装）：
 
-示例中使用了web socket作为信息载体。这个部分自己装这里不再赘述。
+```bash
+npm install @xuri-rpc/websocket-sender     # WebSocket + CBOR
+npm install @xuri-rpc/message-sender       # postMessage (Worker / iframe) + WS relay
+npm install @xuri-rpc/chrome-extension-sender  # Chrome 扩展消息通道
+```
 
-### 使用RPC框架进行一个远程的过程执行并触发一次回调。
-
-服务端
+## 项目结构
 
 ```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
+xuri-rpc                              # 核心包（处理逻辑、代理、消息分发）
+├── packages/
+│   ├── websocket-sender              # WebSocket 传输（CBOR 二进制编码）
+│   ├── message-sender                # postMessage 传输（Worker / iframe）
+│   └── chrome-extension-sender       # Chrome 扩展传输
+├── src/
+│   ├── index.ts                      # 公开导出
+│   ├── rpc.ts                        # 核心实现
+│   └── localSerializationSender.ts   # 进程内测试通道 (DumpChannel)
+└── __tests__/                        # 测试用例
+```
+
+## 核心概念
+
+### Host（主机）
+
+Host 是一个逻辑节点。每个 host 拥有唯一的 `hostId`，在整个分布式系统中必须唯一。
+
+典型场景：每打开一个网页就是一个新实例，必须使用不同的 hostId，否则消息会串发到旧页面。
+
+一个进程内可以有多个 host，对应多组 RPC 连接。
+
+### 参数类型：Data vs Proxy
+
+RPC 调用中的参数分为两类：
+
+- **Data 类型**：纯数据——字符串、数字、布尔值、null、普通对象、数组、Uint8Array。按值序列化传输。
+- **Proxy 类型**：承载行为的对象或函数。不会序列化，而是在远端生成一个代理。调用代理的方法会触发本体执行。
+
+使用 `asProxy()` 显式标记一个参数为 proxy 类型。
+
+### ISender（传输接口）
+
+所有传输层都实现 `ISender` 接口：
+
+```typescript
+interface ISender {
+    send(message: Request | Response): void
+}
+```
+
+你只需实现这个接口就能接入任意传输方式。
+
+### 上下文模式和无上下文的模式
+
+需要补全
+
+---
+
+## API 参考
+
+### 核心包 `xuri-rpc`
+
+#### `setHostId(id: string): void`
+
+设置默认 host 的名称。通常在整个程序入口处调用一次。
+
+```typescript
+import { setHostId } from 'xuri-rpc'
+setHostId('backend')
+```
+
+#### `getMessageReceiver(): MessageReceiver`
+
+获取全局单例 `MessageReceiver`。首次调用时自动创建。
+
+#### `MessageReceiver`
+
+消息分发器，负责接收消息并委派给对应对象处理。
+
+```typescript
+class MessageReceiver {
+    constructor(hostId?: string)
+
+    // 注册 main 对象（入口对象，id 为 'main'）
+    setMain(obj: Record<string, Function>): void
+
+    // 注册一个命名对象。withContext=true 时启用上下文/拦截器机制
+    setObject(id: string, obj: Record<string, Function>, withContext: boolean): void
+
+    // 添加拦截器（中间件），洋葱模型，类似 Koa
+    addInterceptor(interceptor: Interceptor): void
+
+    // 处理收到的消息。clientForCallBack 用于发送响应
+    onReceiveMessage(message: Request | Response, clientForCallBack: Client): Promise<void>
+
+    // 设置结果自动包装函数（对返回值做自动 proxy 转换等）
+    setResultAutoWrapper(autoWrapper: (x: any) => any): void
+}
+```
+
+**拦截器签名：**
+
+```typescript
+type Interceptor = (
+    context: Record<string, any>,
+    message: Request,
+    client: Client,
+    next: () => Promise<void>
+) => Promise<void>
+```
+
+拦截器仅在通过 `setObject(id, obj, true)` 注册的对象上生效。context 字典会作为第一个参数传入被调用的方法。
+
+#### `Client`
+
+RPC 端点，既用于发送请求也用于接收响应。
+
+```typescript
+class Client {
+    constructor(hostId?: string)
+
+    // 设置发送器。参数是一个返回 ISender 的函数
+    setSender(useSender: () => ISender): void
+
+    // 获取远程 main 对象（等价于 getObject('main')）
+    getMain(): Promise<any>
+
+    // 获取远程命名对象
+    getObject(objectId: string): Promise<any>
+
+    // 设置参数自动包装（自动将函数等转为 proxy）
+    setArgsAutoWrapper(autoWrapper: (x: any) => any): void
+}
+```
+
+#### `asProxy(obj: object, hostIdFrom?: string): PreArgObj`
+
+将一个对象标记为 proxy 类型参数。返回 `PreArgObj` 实例，在序列化时会被转换为代理描述符。
+
+```typescript
+import { asProxy } from 'xuri-rpc'
+
+// 传递回调
+await remoteObj.method(asProxy((result) => console.log(result)))
+
+// 传递一个对象
+await remoteObj.method(asProxy({ onClick: () => {} }))
+```
+
+#### 类型定义
+
+```typescript
+// 消息类型
+type Message = Request | Response
+
+interface Request {
+    id: string
+    meta: Record<string, any>
+    method: string
+    objectId: string
+    args: Array<ArgObj>
+}
+
+interface Response {
+    id: string
+    idFor: string          // 对应请求的 id
+    meta: Record<string, any>
+    status: number         // 200=成功, -1=异常, 100=对象未找到
+    trace?: string         // 异常时的堆栈信息
+    data?: ArgObj          // 返回数据
+}
+
+interface ISender {
+    send(message: Request | Response): void
+}
+```
+
+#### 代理管理器
+
+```typescript
+// 管理本地暴露给远端的对象（id ↔ 对象 的映射）
+class ObjectOfProxyManager {   // 导出别名: PlainProxyManager
+    set(obj: object, id: string): void
+    getById(id: string): any
+    get(obj: object): string
+    has(obj: object): boolean
+    deleteById(id: string): void
+    delete(obj: object): void
+    reRegister(id: string): void   // 刷新存活时间
+}
+
+// 管理从远端接收到的代理引用（使用 WeakRef）
+class RemoteProxyManager {   // 导出别名: RunnableProxyManager
+    set(id: string, proxy: RemoteProxy, client: Client): void
+    get(id: string): RemoteProxy | null
+}
+```
+
+#### 工具函数
+
+```typescript
+// 开启/关闭调试日志
+setDebugFlag(flag: boolean): void
+
+// 生成错误响应
+generateErrorReply(message: Request, errorText: string, status?: number, hostId?: string): Response
+
+// 清理过期代理对象（默认超时 30s）
+removeOutdatedProxyObject(timeout?: number): void
+
+// 获取所有 host 的代理持有信息（诊断用）
+getProxyHoldingInfo(): Array<{ hostId: string, count: number, earliestDate: Date }>
+
+// 重新注册存活的远程代理（心跳）
+autoReRegister(): Promise<void>
+
+// 启动自动维护定时器（GC + 心跳 + 超时清理，每 3 秒）
+autoCheck(): void
+
+// 手动删除代理
+_deleteProxyById(id: string, hostId?: string): void
+_deleteProxy(obj: object, hostId?: string): void
+```
+
+---
+
+### `@xuri-rpc/websocket-sender`
+
+基于 WebSocket + CBOR 二进制编码的传输层，支持自动重连。
+
+```typescript
+import { createMain, WebSocketBinarySender } from '@xuri-rpc/websocket-sender'
+
+// 客户端：一行代码连接到服务端
+const [client, main] = await createMain('myClient', 'localhost', 8765)
+const result = await main.hello('world')
+```
+
+**`createMain(hostId, host?, port?, path?)`** — 创建客户端连接，返回 `[Client, mainProxy]`。
+
+**`WebSocketBinarySender`** — ISender 实现，使用 CBOR 编码。支持 `sessionId` 用于服务端多连接路由。
+
+服务端需要自行使用 `ws` 库 + `MessageReceiver` 搭建，用 `decode/encode` 处理 CBOR 消息。
+
+---
+
+### `@xuri-rpc/message-sender`
+
+基于 `postMessage` 的传输层，适用于 Web Worker 和 iframe 场景。通过 postMessage 交换 WebSocket relay 端口，之后实际 RPC 流量走 CBOR WebSocket 帧。
+
+```typescript
+import { workerEndpoint, iframeEndpoint, iframeChildEndpoint, createServer, createMain } from '@xuri-rpc/message-sender'
+```
+
+**端点工厂：**
+
+| 函数 | 使用位置 | 说明 |
+|---|---|---|
+| `workerEndpoint(worker?)` | Worker 内部 | 封装 `self.postMessage` |
+| `iframeEndpoint(iframe, origin?)` | 父页面 | 封装 `iframe.contentWindow.postMessage` |
+| `iframeChildEndpoint(origin?)` | iframe 内部 | 封装 `window.parent.postMessage` |
+| `chromeExtensionPortEndpoint(port)` | Chrome 扩展 | 封装长连接 port |
+
+**`PostMessageEndpoint` 接口：**
+
+```typescript
+interface PostMessageEndpoint {
+    postMessage(msg: any): void
+    onMessage(handler: (msg: any) => void): void
+}
+```
+
+**`createServer(hostId, endpoint)`** — 服务端。启动 WS relay，通过 postMessage 告知客户端端口。返回 `serve` 函数。
+
+**`createMain(hostId, endpoint)`** — 客户端。接收 relay 端口，建立 WS 连接。返回 `[Client, mainProxy]`。
+
+---
+
+### `@xuri-rpc/chrome-extension-sender`
+
+Chrome 扩展消息通道传输层。使用 `chrome.runtime.sendMessage`（请求-响应模式）。
+
+```typescript
+import { createServer, createMain } from '@xuri-rpc/chrome-extension-sender'
+
+// 背景脚本 (background / service worker)
+const serve = createServer('background')
+serve({ myMethod() { return 'hello' } })
+
+// 内容脚本 / popup
+const [client, main] = await createMain('contentScript')
+const result = await main.myMethod()
+```
+
+**`createServer(hostId)`** — 在背景脚本中调用，返回 `serve` 函数。
+
+**`createMain(hostId)`** — 在内容脚本/popup 中调用，返回 `[Client, mainProxy]`。
+
+---
+
+## 快速开始
+
+以下示例展示如何基于 WebSocket 搭建完整的 RPC 服务端和客户端。核心模式只有三步：
+
+1. **实现 ISender**：将 RPC 消息通过你的传输方式发出去
+2. **接收消息**：将收到的数据反序列化后交给 `MessageReceiver.onReceiveMessage()`
+3. **注册对象**：通过 `setMain()` / `setObject()` 注册可被远程调用的对象
+
+### 示例 1：基本 RPC 调用
+
+**服务端 (server.ts)**
+
+```typescript
+import { setHostId, getMessageReceiver, Client } from 'xuri-rpc'
 import { WebSocketServer } from 'ws'
+import { encode, decode } from 'cbor-x'
 
-// 设置hostName
 setHostId('backend')
-//创建一个Sender
-class Sender{
-    constructor(ws){
-        this.ws=ws
-    }
-    async send(message){
-        this.ws.send(JSON.stringify(message))
-    }
-}
-//设置用于提供起始方法的main对象
+
+// 注册入口对象
 getMessageReceiver().setMain({
-    plus(a,b,callback){
-        let r=a+b
-        callback(r)
-        return r
+    add(a: number, b: number) {
+        return a + b
+    },
+    greet(name: string) {
+        return `Hello, ${name}!`
     }
 })
 
+const wss = new WebSocketServer({ port: 8765 })
 
-const wss = new WebSocketServer({ port: 18081 });
-wss.on('connection', (ws, request) => {
-  
-  //创建一个client用于发送返回信息
-  let client=new Client()
-  client.setSender(new Sender(ws))
+wss.on('connection', (ws) => {
+    // 为每个连接创建一个 Client（用于发送响应）
+    const client = new Client()
 
-  ws.on('message', (data) => {
+    // 实现 ISender：将消息序列化后通过 WebSocket 发出
+    client.setSender(() => ({
+        send(message) {
+            ws.send(encode(message))
+        }
+    }))
 
-    //here handle message
-    //处理接收到的信息
-    getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-
-  });
-
-  ws.on('error', (error) => {
-    console.error('客户端连接错误:', error);
-  });
-
-});
-
-wss.on('error', (error) => {
-  console.error('服务器错误:', error);
-});
-```
-
-客户端
-
-```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
-import {WebSocket} from 'ws'
-
-//define a sender
-class Sender {
-  constructor(ws) {
-    this.ws=ws
-  }
-  async send(message) {
-    //message is an object can be jsonified
-    this.ws.send(JSON.stringify(message))
-  }
-}
-async function main(){
-
-    setHostId('frontend')
-    let client=new Client()
-    
-    
-    const ws = new WebSocket('ws://localhost:18081');
-    await new Promise((resolve, reject) => {
-      ws.on('open', resolve);
-      ws.on('error', reject);
-    });
+    // 收到消息后，反序列化并交给 MessageReceiver 处理
     ws.on('message', (data) => {
-      getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-      console.log(`收到服务器消息: ${data}`);
-    });
-    client.setSender(new Sender(ws))
-    
-
-    let main=await client.getMain()
-    let result=await main.plus(1,2,asProxy((result)=>console.log('from callback',result)))
-    console.log('from rpc',result)
-}
-main()
-```
-
-
-
-使用多组 RPC。
-
-### 在调用的时候传递一个上下文变量
-
-首先你定义的对象接收的第一个参数应当是一个表示上下文的字典。
-
-服务端
-
-```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
-import { WebSocketServer } from 'ws'
-
-// 设置hostName
-setHostId('backend')
-//创建一个Sender
-class Sender{
-    constructor(ws){
-        this.ws=ws
-    }
-    async send(message){
-        this.ws.send(JSON.stringify(message))
-    }
-}
-//设置用于提供起始方法的main对象
-getMessageReceiver().setMain({
+        getMessageReceiver().onReceiveMessage(decode(new Uint8Array(data)), client)
+    })
 })
-getMessageReceiver().setObject("greeting",{
-  greeting(context){
-    return `hi,${context.a} and ${context.b}`
-  }
-},true)
-getMessageReceiver().addInterceptor(async (context,message,client,next)=>{
-  context.a='mike'
-  await next()
-})
-getMessageReceiver().addInterceptor(async (context,message,client,next)=>{
-  context.b='john'
-  await next()
-})
-
-
-const wss = new WebSocketServer({ port: 18081 });
-wss.on('connection', (ws, request) => {
-  
-  //创建一个client用于发送返回信息
-  let client=new Client()
-  client.setSender(new Sender(ws))
-
-  ws.on('message', (data) => {
-
-    //here handle message
-    //处理接收到的信息
-    getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-
-  });
-
-  ws.on('error', (error) => {
-    console.error('客户端连接错误:', error);
-  });
-
-});
-
-wss.on('error', (error) => {
-  console.error('服务器错误:', error);
-});
 ```
 
-客户端
+**客户端 (client.ts)**
 
-```
-import { PlainProxyManager,RunnableProxyManager,MessageReceiver,Client,asProxy,getMessageReceiver,setHostId } from 'xuri-rpc'
-import {WebSocket} from 'ws'
+```typescript
+import { setHostId, getMessageReceiver, Client } from 'xuri-rpc'
+import WebSocket from 'ws'
+import { encode, decode } from 'cbor-x'
 
-//define a sender
-class Sender {
-  constructor(ws) {
-    this.ws=ws
-  }
-  async send(message) {
-    //message is an object can be jsonified
-    this.ws.send(JSON.stringify(message))
-  }
-}
-async function main(){
-
-    setHostId('frontend')
-    let client=new Client()
-    
-    
-    const ws = new WebSocket('ws://localhost:18081');
-    await new Promise((resolve, reject) => {
-      ws.on('open', resolve);
-      ws.on('error', reject);
-    });
-    ws.on('message', (data) => {
-      getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-      console.log(`收到服务器消息: ${data}`);
-    });
-    client.setSender(new Sender(ws))
-    
-
-    let main=await client.getObject('greeting');
-    let result=await main.greeting()
-    console.log(result)
-}
-main()
-```
-
-## 教程
-
-### 基本的信息发送流程
-
-一次RPC调用应当包括以下过程:
-
-- 一个从某个client当中获得的远程对象的一个方法被调用。
-- 这个远程对象的代理调用client封装一系列的方法最后组成一条请求(Response)信息(Message)
--  Client调用分配给其的ISender。发送消息。此远程方法通过异步的方式阻塞在这里。
-- 接收端的receiver收到信息以后，委派给对应的对象进行处理。在receiver接受一个消息的时候，应当同步传递一个用于应答的client。
-- 当委派对象处理完时返回结果。
-- 返回结果通过应答client返回给请求侧。
-- 请求侧的receiver收到消息后。此请求的promise被设置为resolve或reject完成本轮请求。
-
-### 经典的使用流程
-
-完整代码参见示例。
-
-服务端
-
-```
-
-// 设置host Id
-setHostId('backend')
-
-//设置用于提供起始方法的main对象,在这个面对象里，你应当添加一些方法返回更多的远程对象。或者你也可以直接就在这个main方法里实现一些业务逻辑的调用。
-getMessageReceiver().setMain({
-})
-
-//你创建了某种方式的消息通道从中获得信息反序列化之后传递给 MessageReceiver,当你把收到的消息传递给MessageReceiver的时候，你还需要同时传递一个client，毕竟这次调用的返回结果你得找个东西发回去。
-const wss = new WebSocketServer({ port: 18081 });
-wss.on('connection', (ws, request) => {
-  
-  //创建一个client用于发送返回信息
-  let client=new Client()
-  client.setSender(new Sender(ws))
-
-  ws.on('message', (data) => {
-
-    //here handle message
-    //处理接收到的信息
-    getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-
-  });
-
-});
-```
-
-客户端
-
-```
-
-//定义一个发送装置。把一个消息对象序列化，并通过某一种底层的传输机制发送出去,比如说一个进程管道，或者是一个web socket连接。
-class Sender {
-  constructor(ws) {
-    this.ws=ws
-  }
-  async send(message) {
-    //message is an object can be jsonified
-    this.ws.send(JSON.stringify(message))
-  }
-}
-
-//设置host ID。
 setHostId('frontend')
-//创建一个client，这个client是完成了RPC调用的一些复杂操作的对象。
-let client=new Client()
 
+async function main() {
+    const client = new Client()
+    const ws = new WebSocket('ws://localhost:8765')
 
+    // 等待连接建立
+    await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => resolve())
+        ws.on('error', reject)
+    })
 
-//创建一个管道。这个管道。既被用于发送信息，也被用于接收返回结果。
-const ws = new WebSocket('ws://localhost:18081');
-await new Promise((resolve, reject) => {
-  ws.on('open', resolve);
-  ws.on('error', reject);
-});
-ws.on('message', (data) => {
-  //创建一个receiver,你发出去的东西总得找个地方接返回结果，是吧？
-  getMessageReceiver().onReceiveMessage(JSON.parse(data),client)
-  console.log(`收到服务器消息: ${data}`);
-});
-//给client绑定对应的sender
-client.setSender(new Sender(ws))
+    // 实现 ISender
+    client.setSender(() => ({
+        send(message) {
+            ws.send(encode(message))
+        }
+    }))
 
+    // 接收服务端响应
+    ws.on('message', (data) => {
+        getMessageReceiver().onReceiveMessage(decode(new Uint8Array(data)), client)
+    })
 
-//获得main对象
-let main=await client.getMain()
-//main对象是服务侧定义的一个远程对象，你应当从这里获得到你定义的函数。调用这些函数，获得更进一步的远程对象或者执行一些业务逻辑。
-let result=await main.plus(1,2,asProxy((result)=>console.log('from callback',result)))
-
+    // 获取远程 main 对象并调用
+    const remoteMain = await client.getMain()
+    console.log(await remoteMain.add(1, 2))       // 3
+    console.log(await remoteMain.greet('world'))   // "Hello, world!"
+}
+main()
 ```
 
+> 也可以使用 `@xuri-rpc/websocket-sender` 简化客户端：
+> ```typescript
+> import { createMain } from '@xuri-rpc/websocket-sender'
+> const [client, main] = await createMain('frontend', 'localhost', 8765)
+> console.log(await main.add(1, 2))
+> ```
 
+### 示例 2：传递回调
 
-### host
+回调函数直接传递即可，框架会自动将其转为代理：
 
-这个东西相当于一个逻辑上的主机概念。正常情况下，它应当是对应于你这个程序的。但是如果你的程序里可能需要很多种rpc连接，那么每一种连接应当对应于一个这样的逻辑主机一个host。
+**服务端**
 
-你应当给你的主机起一个名字这个名字在你的一整套。 分布式。系统里应当是唯一的。 setHostId接受一个字符串作为参数指定默认的主机的名称。通常情况下，你应当且仅应当调用一次这个方法。
+```typescript
+getMessageReceiver().setMain({
+    compute(a: number, b: number, onProgress: any) {
+        onProgress(a + b)   // 调用客户端传来的回调
+        return a * b
+    }
+})
+```
 
-对于有多个rpc连接的情况，也就是你需要设置多个host的情况。你可以在client和receiver的构造函数中传入一个字符串参数作为这个client或者receiver的所属host。
+**客户端**
 
-### asProxy
+```typescript
+const remoteMain = await client.getMain()
 
-一个远程对象接受的参数对象可以分为data类型和proxy类型。 
+// 直接传递函数，框架自动代理
+const result = await remoteMain.compute(3, 4, (val: number) => {
+    console.log('进度:', val)  // 先输出: 进度: 7
+})
+console.log('结果:', result)   // 输出: 结果: 12
+```
 
-Data类型的对象就是一个完全表示数据的对象,例如一个字符串或一个字典或者其它嵌套，复合结构,它可以被以一种确定的方式序列化。在系统实际运行的过程当中。
+也可以用 `asProxy()` 显式标记（需传入当前 hostId）：
 
-Proxy类型对象将会被复制到远程端被远程端处理。推荐这个对象是不可变的对象。而proxy类型的对象。应当是在系统中主要负责承载计算的承载系统逻辑的部分结构。通常这类对象具有广泛的关联,不适合也不能被序列化。在系统执行的过程当中，此对象将会产生一个代理对象发送到远程上。远程主机调用代理对象来控制对象本体执行具体函数。
+```typescript
+import { asProxy } from 'xuri-rpc'
 
-虽然我们提供了一种调用远程对象的方法，但是,原则上我们不建议频繁的创建和使用远程对象,因为不可能把远程对象和本地对象当成一种东西来用。首先我们并没有提供一个健全的卸载远程对象的机制,即没有一种自动的垃圾回收系统。因此，这可能会导致某种意义上的内存泄露。其次是受通信延迟的影响,调用远程方法可能会降低程序效率。
+const result = await remoteMain.compute(3, 4,
+    asProxy((val: number) => console.log('进度:', val), 'frontend')
+)
+```
 
-我们提供了一个asProxy函数。显式地声明一个传递给远程方法的参数是proxy类型。在实现上，它返回了一个proxy类型对象的表示对象,这是一个PreArgObj的实例。
+### 示例 3：返回远程对象
 
-我们还在client上提供了一个setArgsAutoWrapper函数。如果在你的系统中，你能够确定某一种模式的参数必然是一个proxy类型的参数，那么你可以通过给这个函数传递一个函数作为参数。来实现一种自动的转换。注意，应当放过as proxy返回的结果。
+服务端方法返回一个对象，客户端获得它的代理，调用方法会转发回服务端执行。
+
+**服务端**
+
+```typescript
+import { asProxy } from 'xuri-rpc'
+
+getMessageReceiver().setMain({
+    getCalculator() {
+        // 注意：服务端使用 asProxy 时必须传入 server 的 hostId
+        return asProxy({
+            multiply(a: number, b: number) { return a * b },
+            divide(a: number, b: number) {
+                if (b === 0) throw new Error('除数不能为零')
+                return a / b
+            }
+        }, 'backend')
+    }
+})
+```
+
+**客户端**
+
+```typescript
+const remoteMain = await client.getMain()
+const calc = await remoteMain.getCalculator()
+
+console.log(await calc.multiply(6, 7))  // 42
+
+try {
+    await calc.divide(10, 0)
+} catch (e: any) {
+    console.log(e.status)  // -1
+    console.log(e.trace)   // "Error: 除数不能为零\n  at ..."
+}
+```
+
+### 示例 4：函数代理（`__call__`）
+
+返回一个可直接调用的函数（而非对象的方法）：
+
+**服务端**
+
+```typescript
+import { asProxy } from 'xuri-rpc'
+
+getMessageReceiver().setMain({
+    getMultiplier() {
+        return asProxy((a: number, b: number) => a * b, 'backend')
+    },
+    getCounter() {
+        let count = 0
+        return asProxy(() => ++count, 'backend')
+    }
+})
+```
+
+**客户端**
+
+```typescript
+const remoteMain = await client.getMain()
+
+const multiplier = await remoteMain.getMultiplier()
+console.log(await multiplier(3, 4))  // 12
+
+const counter = await remoteMain.getCounter()
+console.log(await counter())  // 1
+console.log(await counter())  // 2
+console.log(await counter())  // 3
+```
+
+### 示例 5：上下文与拦截器
+
+拦截器以洋葱模型运行（类似 Koa），`context` 字典作为第一个参数传入被调用的方法。
+
+**服务端**
+
+```typescript
+import { setHostId, getMessageReceiver, Client } from 'xuri-rpc'
+import { WebSocketServer } from 'ws'
+import { encode, decode } from 'cbor-x'
+
+setHostId('backend')
+
+const receiver = getMessageReceiver()
+receiver.setMain({})
+
+// 注册启用上下文的对象（第三个参数 true）
+receiver.setObject('userService', {
+    getUser(context: any, userId: number) {
+        // context 由拦截器填充
+        return {
+            id: userId,
+            requestedBy: context.userId,
+            role: context.role
+        }
+    },
+    updateUser(context: any, userId: number, updates: any) {
+        if (context.role !== 'admin') {
+            throw new Error('权限不足')
+        }
+        return { success: true, userId, updates }
+    }
+}, true)
+
+// 拦截器 1：添加时间戳
+receiver.addInterceptor(async (context, message, client, next) => {
+    context.timestamp = new Date().toISOString()
+    await next()
+})
+
+// 拦截器 2：身份验证
+receiver.addInterceptor(async (context, message, client, next) => {
+    context.userId = 1001
+    context.role = 'admin'
+    await next()
+})
+
+const wss = new WebSocketServer({ port: 8765 })
+wss.on('connection', (ws) => {
+    const client = new Client()
+    client.setSender(() => ({
+        send(message) { ws.send(encode(message)) }
+    }))
+    ws.on('message', (data) => {
+        receiver.onReceiveMessage(decode(new Uint8Array(data)), client)
+    })
+})
+```
+
+**客户端**
+
+```typescript
+const remoteMain = await client.getMain()
+
+// 获取命名对象
+const userService = await client.getObject('userService')
+
+const user = await userService.getUser(42)
+// { id: 42, requestedBy: 1001, role: 'admin' }
+
+const result = await userService.updateUser(42, { name: 'Alice' })
+// { success: true, userId: 42, updates: { name: 'Alice' } }
+```
+
+6:超时控制
+
+需要补充,包括kill过程,更新时间戳过程,和自动kill机制,包括定时的远程对象清理和定时的等待链接关闭
+
+---
+
+## RPC 调用流程
+
+一次完整的 RPC 调用：
+
+1. 客户端调用远程代理对象的方法
+2. `Client` 将参数序列化（`toArgObj`），组装 `Request` 消息
+3. 通过 `ISender.send()` 发送消息，Promise 挂起等待
+4. 服务端 `MessageReceiver.onReceiveMessage()` 收到消息
+5. 根据 `objectId` 查找本地对象，反序列化参数
+6. 调用目标方法，获取返回值
+7. 将结果序列化，通过 `Client` 的 sender 发送 `Response`
+8. 客户端 `MessageReceiver` 收到响应，匹配 `idFor`，resolve Promise
+
+## Host 与多连接
+
+默认情况下调用 `setHostId()` 设置全局默认 host。如果需要多组独立的 RPC 连接：
+
+```typescript
+// 每组连接使用不同的 hostId
+const receiver1 = new MessageReceiver('connection-a')
+const client1 = new Client('connection-a')
+
+const receiver2 = new MessageReceiver('connection-b')
+const client2 = new Client('connection-b')
+```
+
+每个 `MessageReceiver` 和 `Client` 的 `hostId` 必须匹配，它们共享同一套代理管理器和请求队列。
+
+## 错误处理
+
+- 服务端方法抛出异常 → 客户端收到 `status: -1` 的响应，`trace` 包含堆栈信息
+- 请求的 `objectId` 不存在 → 客户端收到 `status: 100` 的响应
+- 请求超时（默认 30 秒） → Promise 被 reject，错误信息为 `'timeout'`
+
+```typescript
+try {
+    await remoteObj.someMethod()
+} catch (e) {
+    if (e.status === -1) {
+        console.error('服务端异常:', e.trace)
+    } else if (e.status === 100) {
+        console.error('对象不存在')
+    }
+}
+```
+
+## 许可证
+
+MIT
